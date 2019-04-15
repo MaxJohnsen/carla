@@ -84,10 +84,6 @@ class LocalPlanner(object):
     def set_target_speed(self, target_speed):
         self._target_speed = target_speed
     
-    def __del__(self):
-        if self._vehicle:
-            self._vehicle.destroy()
-        print("Destroying ego-vehicle!")
 
     def reset_vehicle(self):
         self._vehicle = None
