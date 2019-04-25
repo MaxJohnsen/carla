@@ -47,6 +47,7 @@ import os
 import sys
 import cv2
 import time
+import ast 
 import numpy as np
 import pandas as pd
 
@@ -169,7 +170,7 @@ def get_actor_display_name(actor, truncate=250):
 
 
 class World(object):
-    def __init__(self, carla_world, hud, history, actor_filter):
+    def __init__(self, carla_world, hud, history, actor_filter, settings):
         self.world = carla_world
         self.map = self.world.get_map()
         self.hud = hud
@@ -181,9 +182,25 @@ class World(object):
         self._spawn_point_start = 52
         self._spawn_point_destination = 102
         self._actor_filter = actor_filter
+        self._settings = self._initialize_routes(settings)
         self.restart()
         self.world.on_tick(hud.on_world_tick)
         self._current_traffic_light = 0
+        self._client_ap_active = False 
+
+    def _initialize_routes(self, settings):
+        s = {}
+        routes = settings.get("Carla", "Routes", fallback=[]).split()        
+        routes = [ast.literal_eval(r) for r in routes]
+        s["routes"] = [[int(r[0]), int(r[1])] for r in routes]
+
+        auto_record = settings.get("Carla", "AutoRecord")
+        print(auto_record)
+        s["auto_record"] = True if auto_record.strip() == "Yes" else False
+        print(s["auto_record"])
+
+        
+        return s
 
     def restart(self):
         self.history._initiate()
@@ -202,6 +219,11 @@ class World(object):
             self.destroy()
             self.player = None
 
+        if len(self._settings["routes"])>0:
+            route = self._settings["routes"].pop(0)
+            self._spawn_point_start = route[0]
+            self._spawn_point_destination = route[1]
+        
         spawn_point = self.map.get_spawn_points()[self._spawn_point_start]
 
         while self.player is None:
@@ -220,9 +242,12 @@ class World(object):
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
-        actor_type = get_actor_display_name(self.player)
-        self.hud.notification(actor_type)
+        print(self._settings["auto_record"])
         
+        if self._settings["auto_record"]: 
+            self.camera_manager.toggle_recording()
+        actor_type = get_actor_display_name(self.player)
+        # self.hud.notification(actor_type)      
 
     def next_weather(self, reverse=False):
         self._weather_index += -1 if reverse else 1
@@ -278,7 +303,7 @@ class KeyboardControl(object):
         self._control = carla.VehicleControl()
         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
         self._steer_cache = 0.0
-        world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
+        # world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
 
         # initialize steering wheel
         if self._steering_wheel_enabled:
@@ -365,6 +390,7 @@ class KeyboardControl(object):
                     self._control_type = ControlType.CLIENT_AP
                     world.hud.notification('Control Mode: Client Autopilot')
                     world.player.set_autopilot(False)
+                    world._client_ap_active = not world._client_ap_active 
                 elif event.key == K_p and pygame.key.get_mods() & KMOD_SHIFT:
                     #TODO: shift + P does not work 
                     self._control_type = ControlType.SERVER_AP
@@ -387,8 +413,20 @@ class KeyboardControl(object):
         elif self._control_type == ControlType.CLIENT_AP:
             world._client_ap.set_target_speed(world.player.get_speed_limit()-10)
             self._parse_client_ap(world)
+            # Change route if client AP has reached its destination
+            position = world.player.get_transform().location
+            destination  = world.map.get_spawn_points()[world._spawn_point_destination].location
+            
+            if abs(position.x-destination.x < 30) and abs(position.y-destination.y)<30:
+                world.hud.notification("Route Complete")
+                if world._settings["auto_record"]:
+                    world.camera_manager.toggle_recording()
+                if len(world._settings["routes"])>0:
+                    world.restart()
 
         world.player.apply_control(self._control)
+
+        
 
     def _parse_vehicle_wheel(self):
         numAxes = self._joystick.get_numaxes()
@@ -726,7 +764,7 @@ class CameraManager(object):
         self._client_ap = client_ap
         self._hud = hud
         self._history = history
-        self._recording = False
+        self._recording = False 
         self._last_recorded_frame = 0
         self._camera_transforms = [
             carla.Transform(
@@ -1020,7 +1058,7 @@ class History:
 # ==============================================================================
 
 
-def game_loop(args):
+def game_loop(args, settings):
     pygame.init()
     pygame.font.init()
     world = None
@@ -1040,7 +1078,7 @@ def game_loop(args):
             model = CNNKeras()
             model.load_model(args.model)
 
-        world = World(client.get_world(), hud, history, args.filter)
+        world = World(client.get_world(), hud, history, args.filter, settings)
         controller = KeyboardControl(world, use_steering_wheel=args.joystick, drive_model=model)
 
         clock = pygame.time.Clock()
@@ -1122,8 +1160,10 @@ def main():
         help='use steering wheel to control vehicle')
 
     args = argparser.parse_args()
-
     args.width, args.height = [int(x) for x in args.res.split('x')]
+
+    settings = ConfigParser()
+    settings.read("settings.ini")
 
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)
@@ -1134,7 +1174,7 @@ def main():
 
     try:
 
-        game_loop(args)
+        game_loop(args, settings)
 
     except KeyboardInterrupt:
         print('\nCancelled by user. Bye!')
