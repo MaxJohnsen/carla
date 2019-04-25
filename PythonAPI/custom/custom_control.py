@@ -83,7 +83,7 @@ except IndexError:
 import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
-from custom_agent import CustomAgent
+from client_autopilot import ClientAutopilot
 
 import argparse
 import collections
@@ -207,10 +207,10 @@ class World(object):
         while self.player is None:
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
 
-        self._custom_agent = CustomAgent(self.player)
+        self._client_ap = ClientAutopilot(self.player)
 
         destination_point = self.map.get_spawn_points()[100]
-        self._custom_agent.set_destination((destination_point.location.x,
+        self._client_ap.set_destination((destination_point.location.x,
                                 destination_point.location.y,
                                 destination_point.location.z))
         # Set up the sensors.
@@ -383,7 +383,7 @@ class KeyboardControl(object):
         elif self._control_type == ControlType.DRIVE_MODEL:
             self._parse_drive_model_commands(world)
         elif self._control_type == ControlType.CLIENT_AP:
-            world._custom_agent.set_target_speed(world.player.get_speed_limit())
+            world._client_ap.set_target_speed(world.player.get_speed_limit())
             self._parse_client_ap(world)
 
         world.player.apply_control(self._control)
@@ -476,7 +476,7 @@ class KeyboardControl(object):
 
     def _parse_client_ap(self, world):
         noise = np.random.uniform(-0.2, 0.2)
-        client_autopilot_control = world._custom_agent.run_step() 
+        client_autopilot_control = world._client_ap.run_step() 
         world.history.update_client_autopilot_control(client_autopilot_control)
         self._control.brake = client_autopilot_control.brake
         self._control.throttle = client_autopilot_control.throttle
@@ -706,7 +706,6 @@ class CameraManager(object):
         self._history = history
         self._recording = False
         self._last_recorded_frame = 0
-        self._current_custom_agent_control = carla.VehicleControl()
         self._camera_transforms = [
             carla.Transform(
                 carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
