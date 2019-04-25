@@ -8,26 +8,15 @@
 
 """ This module contains a local planner to perform low-level waypoint following based on PID controllers. """
 
-from enum import Enum
 from collections import deque
 import random
 
 import carla
 from agents.navigation.controller import VehiclePIDController
 from agents.tools.misc import distance_vehicle, draw_waypoints
+from enums import RoadOption
 
 
-class RoadOption(Enum):
-    """
-    RoadOption represents the possible topological configurations when moving from a segment of lane to other.
-    """
-    VOID = -1
-    LEFT = 1
-    RIGHT = 2
-    STRAIGHT = 3
-    LANEFOLLOW = 4
-    CHANGELANELEFT = 5
-    CHANGELANERIGHT = 6
 
 
 class LocalPlanner(object):
