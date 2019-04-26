@@ -179,31 +179,34 @@ class World(object):
         self.camera_manager = None
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
-        self._spawn_point_start = 52
-        self._spawn_point_destination = 102
+        self._spawn_point_start = 237
+        self._spawn_point_destination = 17
         self._actor_filter = actor_filter
-        self._settings = self._initialize_routes(settings)
+        #self._settings = self._initialize_settings(settings)
+        self._routes = None 
+        self._auto_record = None 
+        self._initialize_settings(settings)
         self.restart()
         self.world.on_tick(hud.on_world_tick)
         self._current_traffic_light = 0
-        self._client_ap_active = False 
+        self._client_ap_active = False
+        self._quit_next = False
 
-    def _initialize_routes(self, settings):
+    def _initialize_settings(self, settings):
         s = {}
-        routes = settings.get("Carla", "Routes", fallback=[]).split()        
-        routes = [ast.literal_eval(r) for r in routes]
-        s["routes"] = [[int(r[0]), int(r[1])] for r in routes]
-
-        auto_record = settings.get("Carla", "AutoRecord")
-        print(auto_record)
-        s["auto_record"] = True if auto_record.strip() == "Yes" else False
-        print(s["auto_record"])
+        routes = settings.get("Carla", "Routes", fallback=None)
+        auto_record = settings.get("Carla", "AutoRecord", fallback=None)
+        if routes: 
+            routes = routes.split()
+            routes = [ast.literal_eval(r) for r in routes]
+            self._routes = [[int(r[0]), int(r[1])] for r in routes]
+        if auto_record:
+            self._auto_record = True if auto_record.strip() == "Yes" else False
 
         
-        return s
 
     def restart(self):
-        self.history._initiate()
+        self.history._initiate() 
 
         # Keep same camera config if the camera manager exists.
         cam_index = self.camera_manager._index if self.camera_manager is not None else 0
@@ -219,10 +222,15 @@ class World(object):
             self.destroy()
             self.player = None
 
-        if len(self._settings["routes"])>0:
-            route = self._settings["routes"].pop(0)
-            self._spawn_point_start = route[0]
-            self._spawn_point_destination = route[1]
+        if self._routes is not None:
+            if len(self._routes)>0:
+                route = self._routes.pop(0)
+                self._spawn_point_start = route[0]
+                self._spawn_point_destination = route[1]
+            else:
+                self._quit_next = True
+            
+            
         
         spawn_point = self.map.get_spawn_points()[self._spawn_point_start]
 
@@ -242,9 +250,9 @@ class World(object):
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
-        print(self._settings["auto_record"])
         
-        if self._settings["auto_record"]: 
+        # Turn on recording at new route 
+        if self._auto_record: 
             self.camera_manager.toggle_recording()
         actor_type = get_actor_display_name(self.player)
         # self.hud.notification(actor_type)      
@@ -296,13 +304,16 @@ class World(object):
 
 
 class KeyboardControl(object):
-    def __init__(self, world, use_steering_wheel=False, start_control_type=ControlType.MANUAL, drive_model=None):
+    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None):
         self._drive_model = drive_model
         self._steering_wheel_enabled = use_steering_wheel
-        self._control_type = start_control_type
+        self._control_type = None         
+        self._noise = None
+        self._initialize_settings(settings)
         self._control = carla.VehicleControl()
         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
         self._steer_cache = 0.0
+
         # world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
 
         # initialize steering wheel
@@ -327,6 +338,10 @@ class KeyboardControl(object):
             self._handbrake_idx = int(
                 self._parser.get('G29 Racing Wheel', 'handbrake'))
 
+    def _initialize_settings(self, settings):
+        self._control_type = ControlType[settings.get("Carla", "ControlType", fallback="MANUAL")]
+        self._noise = int(settings.get("Carla", "Noise", fallback="0"))
+     
     def parse_events(self, client, world, clock):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -416,13 +431,12 @@ class KeyboardControl(object):
             # Change route if client AP has reached its destination
             position = world.player.get_transform().location
             destination  = world.map.get_spawn_points()[world._spawn_point_destination].location
-            
-            if abs(position.x-destination.x < 30) and abs(position.y-destination.y)<30:
+            if abs(position.x-destination.x) < 30 and abs(position.y-destination.y)<30:
                 world.hud.notification("Route Complete")
-                if world._settings["auto_record"]:
-                    world.camera_manager.toggle_recording()
-                if len(world._settings["routes"])>0:
-                    world.restart()
+                world.restart()
+                if world._quit_next:
+                    return True
+                    
 
         world.player.apply_control(self._control)
 
@@ -534,7 +548,7 @@ class KeyboardControl(object):
         self._control.hand_brake = keys[K_SPACE]
 
     def _parse_client_ap(self, world):
-        noise = np.random.uniform(-0.05, 0.05)
+        noise = np.random.uniform(-self._noise, self._noise)
         client_autopilot_control = world._client_ap.run_step() 
         world.history.update_client_autopilot_control(client_autopilot_control)
         self._control.brake = client_autopilot_control.brake
@@ -897,7 +911,7 @@ class CameraManager(object):
             self._hud.notification('Writing data to disk, please wait..')
             self._history.save_to_disk()
             self._hud.notification('Writing complete!')
-        else:
+        else: 
             self._history._active = True
 
         self._recording = not self._recording
@@ -957,7 +971,6 @@ class History:
 
 
     def _initiate(self):
-
         if self._active:
             self.save_to_disk()
         
@@ -988,6 +1001,7 @@ class History:
         self._latest_hlc = hlc
 
     def record_frame(self, player, client_ap):
+        
         images = []
         self._frame_number += 1
 
@@ -996,6 +1010,8 @@ class History:
         c = player.get_control()
 
         if self.control_type == ControlType.CLIENT_AP:
+            if not self._latest_client_autopilot_control:
+                return
             client_ap_c = self._latest_client_autopilot_control
             hlc = client_ap._local_planner._target_road_option.value
         else:
@@ -1079,7 +1095,7 @@ def game_loop(args, settings):
             model.load_model(args.model)
 
         world = World(client.get_world(), hud, history, args.filter, settings)
-        controller = KeyboardControl(world, use_steering_wheel=args.joystick, drive_model=model)
+        controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)
 
         clock = pygame.time.Clock()
 

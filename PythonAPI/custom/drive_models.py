@@ -30,7 +30,6 @@ class CNNKeras(ModelInterface):
         print("Drive model loaded")
 
     def get_prediction(self, images, info):
-        print("test11111")
         if self._model is None:
             return False
 
@@ -44,9 +43,6 @@ class CNNKeras(ModelInterface):
         ]
 
         # hlc_input = self._one_hot_hlc[int(info["hlc"])]
-
-        print(np.array([img_input]).shape)
-        print(np.array([info_input]).shape)
 
         prediction = self._model.predict({
             "image_input": np.array([img_input]),

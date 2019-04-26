@@ -12,7 +12,7 @@ The agent also responds to traffic lights. """
 
 
 import carla
-from agents.navigation.agent import Agent, AgentState
+from agent import Agent, AgentState
 from local_planner import LocalPlanner
 from agents.navigation.global_route_planner import GlobalRoutePlanner
 from agents.navigation.global_route_planner_dao import GlobalRoutePlannerDAO
@@ -110,11 +110,17 @@ class ClientAutopilot(Agent):
             hazard_detected = True
 
         # check for the state of the traffic lights
-        light_state, traffic_light = self._is_light_red(lights_list)
+        """light_state, traffic_light = self._is_light_red(lights_list)
         if light_state:
             if debug:
                 print('=== RED LIGHT AHEAD [{}])'.format(traffic_light.id))
 
+            self._state = AgentState.BLOCKED_RED_LIGHT
+            hazard_detected = True"""
+        
+        light_state = self._is_light_red_custom()
+
+        if light_state: 
             self._state = AgentState.BLOCKED_RED_LIGHT
             hazard_detected = True
 
