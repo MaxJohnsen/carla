@@ -46,6 +46,9 @@ class BasicAgent(Agent):
         self._target_speed = target_speed
         self._grp = None
 
+    def set_target_speed(self, target_speed):
+        self._local_planner.set_target_speed(target_speed)
+
     def set_destination(self, location):
         """
         This method creates a list of waypoints from agent's position to destination location
@@ -106,13 +109,12 @@ class BasicAgent(Agent):
             hazard_detected = True
 
         # check for the state of the traffic lights
-        light_state, traffic_light = self._is_light_red(lights_list)
-        if light_state:
-            if debug:
-                print('=== RED LIGHT AHEAD [{}])'.format(traffic_light.id))
+        light_state = self._is_light_red_custom()
 
+        if light_state: 
             self._state = AgentState.BLOCKED_RED_LIGHT
             hazard_detected = True
+
 
         if hazard_detected:
             control = self.emergency_stop()

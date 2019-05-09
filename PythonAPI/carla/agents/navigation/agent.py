@@ -58,6 +58,13 @@ class Agent(object):
 
         return control
 
+    def _is_light_red_custom(self): 
+        
+        traffic_light_state = self._vehicle.get_traffic_light_state()
+        if traffic_light_state == carla.TrafficLightState.Red:
+            return True
+        return False
+
     def _is_light_red(self, lights_list):
         """
         Method to check if there is a red light affecting us. This version of
