@@ -19,6 +19,7 @@ class ControlType(Enum):
     DRIVE_MODEL = 3
 
 class Enviornment(Enum):
+    VOID = -1
     HIGHWAY = 0
 
     
