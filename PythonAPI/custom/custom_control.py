@@ -182,8 +182,9 @@ class World(object):
         self._spawn_point_start = 237
         self._spawn_point_destination = 17
         self._actor_filter = actor_filter
-        #self._settings = self._initialize_settings(settings)
         self._routes = None 
+        self._current_route_num = None
+        self._tot_route_num = None 
         self._auto_record = None 
         self._initialize_settings(settings)
         self.restart()
@@ -200,6 +201,8 @@ class World(object):
             routes = routes.split()
             routes = [ast.literal_eval(r) for r in routes]
             self._routes = [[int(r[0]), int(r[1])] for r in routes]
+            self._current_route_num = 0
+            self._tot_route_num = len(self._routes)
         if auto_record:
             self._auto_record = True if auto_record.strip() == "Yes" else False
 
@@ -229,6 +232,8 @@ class World(object):
                 self._spawn_point_destination = route[1]
             else:
                 self._quit_next = True
+        if self._current_route_num is not None: 
+            self._current_route_num += 1
             
             
         
@@ -340,7 +345,7 @@ class KeyboardControl(object):
 
     def _initialize_settings(self, settings):
         self._control_type = ControlType[settings.get("Carla", "ControlType", fallback="MANUAL")]
-        self._noise = int(settings.get("Carla", "Noise", fallback="0"))
+        self._noise = float(settings.get("Carla", "Noise", fallback="0"))
      
     def parse_events(self, client, world, clock):
         for event in pygame.event.get():
@@ -436,8 +441,6 @@ class KeyboardControl(object):
                 world.restart()
                 if world._quit_next:
                     return True
-                    
-
         world.player.apply_control(self._control)
 
         
@@ -606,21 +609,26 @@ class HUD(object):
         vehicles = world.world.get_actors().filter('vehicle.*')
         speed = 3.6 * math.sqrt(v.x**2 + v.y**2 + v.z**2)
         speed_limit = world.player.get_speed_limit()
+
+
         self._info_text = [
             'Server:  % 16.0f FPS' % self.server_fps,
             'Client:  % 16.0f FPS' % clock.get_fps(), '',
             'Vehicle: % 20s' % get_actor_display_name(
                 world.player, truncate=20),
             'Map:     % 20s' % world.map.name,
-            'Spawn:   % 20s' % str(world._spawn_point_start),
+            'Spawn:   % 20d' % world._spawn_point_start,
             'Simulation time: % 12s' %
             datetime.timedelta(seconds=int(self.simulation_time)), '',
             'Speed:   % 15.0f km/h' % speed,
+            'Steer:   % 17.2f' % c.steer,
             u'Heading:% 16.0f\N{DEGREE SIGN} % 2s' % (t.rotation.yaw, heading),
             'Location:% 20s' % ('(% 5.1f, % 5.1f)' %
                                 (t.location.x, t.location.y)),
             'Height:  % 18.0f m' % t.location.z, ''
         ]
+        if world._current_route_num is not None and world._tot_route_num is not None: 
+            self._info_text += ['Route status: % 9d/%4d' % (world._current_route_num, world._tot_route_num)]
         if isinstance(c, carla.VehicleControl):
             self._info_text += [('Throttle:', c.throttle, 0.0, 1.0),
                                 ('Steer:', c.steer, -1.0, 1.0),
@@ -638,7 +646,8 @@ class HUD(object):
         self._info_text += [
             'Number of vehicles: % 8d' % len(vehicles)
         ]
-        self._info_text.append(('Speed: ', '%s/%s'%(int(speed), int(speed_limit))))
+        self._info_text.append(('Speed: ', '%.0f/%.0f'%(speed, speed_limit)))
+
 
     def toggle_info(self):
         self._show_info = not self._show_info
@@ -681,6 +690,8 @@ class HUD(object):
                         pygame.draw.rect(display, (255, 255, 255), rect_border,
                                          1)
                         f = (item[1] - item[2]) / (item[3] - item[2])
+                        if(math.isnan(f)):
+                            f = (0.0 - item[2]) / (item[3] - item[2])                            
                         if item[2] < 0.0:
                             rect = pygame.Rect(
                                 (bar_h_offset + f * (bar_width - 6),
@@ -1013,6 +1024,7 @@ class History:
             if not self._latest_client_autopilot_control:
                 return
             client_ap_c = self._latest_client_autopilot_control
+
             hlc = client_ap._local_planner._target_road_option.value
         else:
             client_ap_c = None
@@ -1030,7 +1042,8 @@ class History:
         ) == carla.TrafficLightState.Red else 1
 
         speed = math.sqrt(v.x**2 + v.y**2 + v.z**2)
-
+        if math.isnan(c.steer) or (self.control_type == ControlType.CLIENT_AP and math.isnan(client_ap_c.steer)):
+            return 
         self._driving_log = self._driving_log.append(
             pd.Series([
                 "imgs/forward_center_rgb_%08d.png" % self._frame_number,
