@@ -269,6 +269,7 @@ class GlobalRoutePlanner(object):
 
         for i in range(len(route) - 1):
             road_option = self._turn_decision(i, route)
+            #print(road_option)
             edge = self._graph.edges[route[i], route[i+1]]
             path = []
 
