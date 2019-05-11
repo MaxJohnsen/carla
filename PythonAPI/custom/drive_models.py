@@ -1,9 +1,12 @@
 from abc import ABC, abstractmethod
 import cv2
 import numpy as np
+import os 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2' 
 import tensorflow as tf
 from tensorflow.keras.backend import set_session
-
+import tensorflow.keras.losses
+import re
 
 class ModelInterface(ABC):
     @abstractmethod
@@ -23,11 +26,19 @@ class CNNKeras(ModelInterface):
         config.log_device_placement = True
         sess = tf.Session(config=config)
         set_session(sess)
+        self.parameter_path = None 
+        self._steer_scale = 1.0
 
+
+    
     def load_model(self, path):
-        print("drive model: " + path)
-        self._model = tf.keras.models.load_model(path)
-        print("Drive model loaded")
+        self._model = tf.keras.models.load_model(path, compile=False)
+        match = re.search("scale(\d+\.*\d*)", str(path))
+        if match: 
+            self._steer_scale = float(match.group(1))
+
+        print("Drive model loaded with steer scale ", self._steer_scale)
+
 
     def get_prediction(self, images, info):
         if self._model is None:
@@ -51,7 +62,7 @@ class CNNKeras(ModelInterface):
 
         prediction = prediction[0]
         throttle = prediction[0]
-        steer = prediction[1]
+        steer = prediction[1]/self._steer_scale
         brake = prediction[2]
         return (steer, throttle, brake)
 
@@ -59,6 +70,7 @@ class CNNKeras(ModelInterface):
 class LSTMKeras(ModelInterface):
     def __init__(self, seq_length, seq_space, late_hlc=False):
         self._model = None
+        self._models_path = None 
         self._img_history = []
         self._info_history = []
         self._hlc_history = []
@@ -70,6 +82,7 @@ class LSTMKeras(ModelInterface):
 
     def load_model(self, path):
         self._model = tf.keras.models.load_model(path)
+
 
     def get_prediction(self, images, info):
         if self._model is None:
