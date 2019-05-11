@@ -42,6 +42,7 @@ Use the following commands:
         takes a long time!
 
     export-maps:
+
         Export maps from /Game/Carla/ExportedMaps to the ExportedMaps folder
         at the root of the Carla project.
 
@@ -65,6 +66,10 @@ for developers:
 
         Run the benchmark tests for LibCarla.
 
+    (run-)examples:
+
+        Build (and run) the C++ client examples.
+
     CarlaUE4Editor:
 
         Build CarlaUE4 project, but do not launch the editor.
@@ -84,6 +89,10 @@ for developers:
     setup:
 
         Run the setup step only.
+
+    deploy:
+
+        Upload nightly build.
 
     pretty:
 

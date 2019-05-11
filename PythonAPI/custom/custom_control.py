@@ -99,9 +99,9 @@ except IndexError:
 import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
-from client_autopilot import ClientAutopilot
-from enums import RoadOption, Enviornment, ControlType, NoiseMode
 from helpers import get_best_models, get_parameter_text
+from agents.navigation.basic_agent import BasicAgent
+from agents.tools.enums import RoadOption, Enviornment, ControlType, NoiseMode
 
 import argparse
 import collections
@@ -261,7 +261,7 @@ class World(object):
         while self.player is None:
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
 
-        self._client_ap = ClientAutopilot(self.player)
+        self._client_ap = BasicAgent(self.player)
 
         destination_point = self.map.get_spawn_points()[self._spawn_point_destination]
         self._client_ap.set_destination((destination_point.location.x,

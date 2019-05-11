@@ -8,27 +8,13 @@
 
 """ This module contains a local planner to perform low-level waypoint following based on PID controllers. """
 
-from enum import Enum
 from collections import deque
 import random
 
 import carla
 from agents.navigation.controller import VehiclePIDController
 from agents.tools.misc import distance_vehicle, draw_waypoints
-
-
-class RoadOption(Enum):
-    """
-    RoadOption represents the possible topological configurations when moving from a segment of lane to other.
-    """
-    VOID = -1
-    LEFT = 1
-    RIGHT = 2
-    STRAIGHT = 3
-    LANEFOLLOW = 4
-    CHANGELANELEFT = 5
-    CHANGELANERIGHT = 6
-
+from agents.tools.enums import RoadOption
 
 class LocalPlanner(object):
     """
@@ -81,10 +67,9 @@ class LocalPlanner(object):
         # initializing controller
         self._init_controller(opt_dict)
 
-    def __del__(self):
-        if self._vehicle:
-            self._vehicle.destroy()
-        print("Destroying ego-vehicle!")
+    def set_target_speed(self, target_speed):
+        if self._vehicle:		        
+            self._target_speed = target_speed
 
     def reset_vehicle(self):
         self._vehicle = None

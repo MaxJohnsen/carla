@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        UE4_ROOT = '/var/lib/jenkins/UnrealEngine_4.21'
+        UE4_ROOT = '/var/lib/jenkins/UnrealEngine_4.22'
     }
 
     options {
@@ -22,6 +22,7 @@ pipeline {
                 sh 'make LibCarla'
                 sh 'make PythonAPI'
                 sh 'make CarlaUE4Editor'
+                sh 'make examples'
             }
             post {
                 always {
@@ -64,14 +65,22 @@ pipeline {
 
         stage('Smoke Tests') {
             steps {
-                sh 'DISPLAY= ./Dist/*/LinuxNoEditor/CarlaUE4.sh --carla-rpc-port=3654 --carla-streaming-port=0 > CarlaUE4.log &'
+                sh 'DISPLAY= ./Dist/*/LinuxNoEditor/CarlaUE4.sh --carla-rpc-port=3654 --carla-streaming-port=0 -nosound > CarlaUE4.log &'
                 sh 'make smoke_tests ARGS="--xml"'
+                sh 'make run-examples ARGS="localhost 3654"'
             }
             post {
                 always {
                     archiveArtifacts 'CarlaUE4.log'
                     junit 'Build/test-results/smoke-tests-*.xml'
                 }
+            }
+        }
+
+        stage('Deploy') {
+            when { anyOf { branch "master"; buildingTag() } }
+            steps {
+                sh 'make deploy ARGS="--replace-latest"'
             }
         }
     }
