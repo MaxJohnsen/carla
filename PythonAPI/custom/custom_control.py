@@ -877,7 +877,7 @@ class CameraManager(object):
         self._hud = hud
         self._history = history
         self._recording = False 
-        self._capture_rate = 2
+        self._capture_rate = 3
         self._frame_number = 1
         self._camera_transforms = [
             carla.Transform(
