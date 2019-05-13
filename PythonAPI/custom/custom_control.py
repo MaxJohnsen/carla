@@ -13,41 +13,25 @@ Welcome to CARLA manual control.
 
 Use ARROWS or WASD keys for control.
 
-    CONTROL VEHICLE  
-    ----------------------------------------
     W            : throttle
     S            : brake
     AD           : steer
     Q            : toggle reverse
     Space        : hand-brake
+    P            : toggle autopilot
+    M            : toggle manual transmission
+    ,/.          : gear up/down
 
-
-    CONTROL MODE 
-    ----------------------------------------
-    O            : model driving             
-    P            : autopilot driving 
-    M            : manual driving
-
-    OTHERS 
-    ----------------------------------------
-    R            : toggle recording images to disk
-    U:           : change model
-    I            : toggle noise
-    N            : next spawn point
-    B            : previous spawn poiny
-    Backspace    : restart episode/next route
-    
-    ESC          : quit
-    F1           : toggle HUD
-    H/?          : toggle help
-
-    SENSORS
-    ----------------------------------------
     TAB          : change sensor position
     `            : next sensor
     [1-9]        : change to sensor [1-9]
     C            : change weather (Shift+C reverse)
+    Backspace    : change vehicle
 
+    R            : toggle recording images to disk
+    F1           : toggle HUD
+    H/?          : toggle help
+    ESC          : quit
 """
 
 from __future__ import print_function
@@ -99,9 +83,8 @@ except IndexError:
 import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
-from helpers import get_best_models, get_parameter_text
 from agents.navigation.basic_agent import BasicAgent
-from agents.tools.enums import RoadOption, Enviornment, ControlType, NoiseMode
+from agents.tools.enums import RoadOption, Enviornment, ControlType
 
 import argparse
 import collections
@@ -136,7 +119,6 @@ try:
     from pygame.locals import K_c
     from pygame.locals import K_d
     from pygame.locals import K_h
-    from pygame.locals import K_i
     from pygame.locals import K_m
     from pygame.locals import K_n
     from pygame.locals import K_o
@@ -144,7 +126,6 @@ try:
     from pygame.locals import K_q
     from pygame.locals import K_r
     from pygame.locals import K_s
-    from pygame.locals import K_u
     from pygame.locals import K_w
     from pygame.locals import K_KP1
     from pygame.locals import K_KP3
@@ -328,54 +309,43 @@ class World(object):
 
 
 class KeyboardControl(object):
-    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None, model_paths=None, parameter_paths=None):
+    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None):
         self._drive_model = drive_model
         self._steering_wheel_enabled = use_steering_wheel
-        self._control_type = None 
-
-        self._noise_enabled = False
-        self._noise_amount = None
-        self._noise_mode = None 
-
-        self._impulse_count = 0
-
+        self._control_type = None         
+        self._noise = None
         self._initialize_settings(settings)
         self._control = carla.VehicleControl()
         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
         self._steer_cache = 0.0
 
-        self._model_paths = model_paths
-        self._parameter_paths = parameter_paths
+        # world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
+
         # initialize steering wheel
         if self._steering_wheel_enabled:
-            self._initialize_steering_wheel()
-        
+            pygame.joystick.init()
+
+            joystick_count = pygame.joystick.get_count()
+            if joystick_count > 1:
+                raise ValueError("Please Connect Just One Joystick")
+
+            self._joystick = pygame.joystick.Joystick(0)
+            self._joystick.init()
+
+            self._parser = ConfigParser()
+            self._parser.read('wheel_config.ini')
+            self._steer_idx = int(
+                self._parser.get('G29 Racing Wheel', 'steering_wheel'))
+            self._throttle_idx = int(
+                self._parser.get('G29 Racing Wheel', 'throttle'))
+            self._brake_idx = int(self._parser.get('G29 Racing Wheel', 'brake'))
+            self._reverse_idx = int(self._parser.get('G29 Racing Wheel', 'reverse'))
+            self._handbrake_idx = int(
+                self._parser.get('G29 Racing Wheel', 'handbrake'))
+
     def _initialize_settings(self, settings):
         self._control_type = ControlType[settings.get("Carla", "ControlType", fallback="MANUAL")]
-        self._noise_amount = float(settings.get("Carla", "Noise", fallback="0"))
-        self._noise_mode = NoiseMode[settings.get("Carla", "NoiseMode", fallback="IMPULSE")]
-
-    def _initialize_steering_wheel(self):
-        pygame.joystick.init()
-
-        joystick_count = pygame.joystick.get_count()
-        if joystick_count > 1:
-            raise ValueError("Please Connect Just One Joystick")
-
-        self._joystick = pygame.joystick.Joystick(0)
-        self._joystick.init()
-
-        self._parser = ConfigParser()
-        self._parser.read('wheel_config.ini')
-        self._steer_idx = int(
-            self._parser.get('G29 Racing Wheel', 'steering_wheel'))
-        self._throttle_idx = int(
-            self._parser.get('G29 Racing Wheel', 'throttle'))
-        self._brake_idx = int(self._parser.get('G29 Racing Wheel', 'brake'))
-        self._reverse_idx = int(self._parser.get('G29 Racing Wheel', 'reverse'))
-        self._handbrake_idx = int(
-            self._parser.get('G29 Racing Wheel', 'handbrake'))
-
+        self._noise = float(settings.get("Carla", "Noise", fallback="0"))
      
     def parse_events(self, client, world, clock):
         for event in pygame.event.get():
@@ -407,14 +377,6 @@ class KeyboardControl(object):
                     world.hud.toggle_info()
                 elif event.key == K_h:
                     world.hud.help.toggle()
-                elif event.key == K_i:
-                    self._noise_enabled = not self._noise_enabled
-                    if not self._noise_enabled: 
-                        self._impulse_count = 0
-                    noise_status = "Enabled" if self._noise_enabled else "Disabled"
-                    world.hud.notification('Noise: ' + noise_status)
-
-
                 elif event.key == K_TAB:
                     world.camera_manager.toggle_camera()
                 elif event.key == K_n:
@@ -449,23 +411,6 @@ class KeyboardControl(object):
                     world.hud.notification('Control Mode: Client Autopilot')
                     world.player.set_autopilot(False)
                     world._client_ap_active = not world._client_ap_active 
-                elif event.key == K_u: 
-                    # If multiple model testing is activated and there are remaining models to test 
-                    if self._model_paths is not None and len(self._model_paths)>0: 
-                        drive_model_parameters = self._parameter_paths.pop(0)
-                        drive_model_path = self._model_paths.pop(0) 
-                        model = CNNKeras()
-                        model.load_model(drive_model_path)
-                        self._drive_model = model
-                        world.restart()
-                        
-                        world.hud.notification('Next model')
-                        world.hud._drive_model_parameters = get_parameter_text(drive_model_parameters)
-                        world.hud._drive_model_name = str(drive_model_path).split('/')[-1]
-
-                    else: 
-                        world.hud.notification('No more models left')
-
                 elif event.key == K_p and pygame.key.get_mods() & KMOD_SHIFT:
                     #TODO: shift + P does not work 
                     self._control_type = ControlType.SERVER_AP
@@ -605,30 +550,12 @@ class KeyboardControl(object):
         self._control.hand_brake = keys[K_SPACE]
 
     def _parse_client_ap(self, world):
-        
-        client_autopilot_control = world._client_ap.run_step(debug=True) 
+        noise = np.random.uniform(-self._noise, self._noise)
+        client_autopilot_control = world._client_ap.run_step() 
         world.history.update_client_autopilot_control(client_autopilot_control)
         self._control.brake = client_autopilot_control.brake
         self._control.throttle = client_autopilot_control.throttle
-        if self._noise_enabled: 
-
-            if self._noise_mode == NoiseMode.RANDOM:
-                noise = np.random.uniform(-self._noise_amount, self._noise_amount)
-                self._control.steer = client_autopilot_control.steer + noise
-            elif self._noise_mode == NoiseMode.IMPULSE:
-                impulse_length = 10
-                if self._impulse_count < impulse_length: 
-                    self._control.steer = client_autopilot_control.steer + self._noise_amount # TODO: this is only left noise, add right noise as well
-                    self._impulse_count +=1
-
-                else:
-                    self._control.steer = client_autopilot_control.steer * 0.6
-
-
-        else:
-            self._control.steer = client_autopilot_control.steer 
-            
-            
+        self._control.steer = client_autopilot_control.steer + noise
 
 
     @staticmethod
@@ -654,18 +581,17 @@ class HUD(object):
         self._notifications = FadingText(font, (width, 40), (0, height - 40))
         self.help = HelpText(pygame.font.Font(self._mono, 24), width, height)
         self.server_fps = 0
+        self.server_fps_realtime = 0
         self.frame_number = 0
         self.simulation_time = 0
         self._show_info = True
         self._info_text = []
         self._server_clock = pygame.time.Clock()
-        self._drive_model_parameters = []
-        self._drive_model_name = None
-
 
     def on_world_tick(self, timestamp):
         self._server_clock.tick()
-        self.server_fps = self._server_clock.get_fps()
+        self.server_fps = 1 / timestamp.delta_seconds
+        self.server_fps_realtime = self._server_clock.get_fps()
         self.frame_number = timestamp.frame_count
         self.simulation_time = timestamp.elapsed_seconds
 
@@ -687,6 +613,7 @@ class HUD(object):
 
 
         self._info_text = [
+            'Server (realtime):  % 5.0f FPS' % self.server_fps_realtime,
             'Server:  % 16.0f FPS' % self.server_fps,
             'Client:  % 16.0f FPS' % clock.get_fps(), '',
             'Vehicle: % 20s' % get_actor_display_name(
@@ -715,21 +642,12 @@ class HUD(object):
                                     -1: 'R',
                                     0: 'N'
                                 }.get(c.gear, c.gear)]
-        
-
+        elif isinstance(c, carla.WalkerControl):
+            self._info_text += [('Speed:', c.speed, 0.0, 5.556),
+                                ('Jump:', c.jump)]
         self._info_text += [
             'Number of vehicles: % 8d' % len(vehicles)
         ]
-
-        if self._drive_model_name is not None: 
-            self._info_text += ['']
-            self._info_text += ['Drive model: %s' % self._drive_model_name]
-
-        if len(self._drive_model_parameters)> 0: 
-            for param in self._drive_model_parameters: 
-                self._info_text += [param]
-
-                
         self._info_text.append(('Speed: ', '%.0f/%.0f'%(speed, speed_limit)))
 
 
@@ -775,7 +693,7 @@ class HUD(object):
                                          1)
                         f = (item[1] - item[2]) / (item[3] - item[2])
                         if(math.isnan(f)):
-                            f = (0.0 - item[2]) / (item[3] - item[2])                            
+                            continue                         
                         if item[2] < 0.0:
                             rect = pygame.Rect(
                                 (bar_h_offset + f * (bar_width - 6),
@@ -874,7 +792,8 @@ class CameraManager(object):
         self._hud = hud
         self._history = history
         self._recording = False 
-        self._last_recorded_frame = 0
+        self._capture_rate = 2
+        self._frame_number = 1
         self._camera_transforms = [
             carla.Transform(
                 carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
@@ -1015,10 +934,9 @@ class CameraManager(object):
 
     def tick(self):
         if self._recording:
-            timestamp = time.time()
-            if timestamp - self._last_recorded_frame > 0.1:
+            if self._frame_number % self._capture_rate == 0:
                 self._history.record_frame(self._parent, self._client_ap)
-                self._last_recorded_frame = timestamp
+            self._frame_number += 1
 
     def render(self, display):
         if self._surface is not None:
@@ -1178,6 +1096,11 @@ def game_loop(args, settings):
 
     try:
         client = carla.Client(args.host, args.port)
+        sim_world = client.get_world()
+        world_settings = sim_world.get_settings()
+        world_settings.synchronous_mode = True
+        sim_world.apply_settings(world_settings)
+
         client.set_timeout(15.0)
 
         display = pygame.display.set_mode((args.width, args.height),
@@ -1186,34 +1109,22 @@ def game_loop(args, settings):
         hud = HUD(args.width, args.height)
         history = History(args.output)
 
-        world = World(client.get_world(), hud, history, args.filter, settings)
-        
-        # Program can either be called with a folder of models to try, or one specific model file to test 
-        if args.models is not None:
-            model_paths, parameter_paths = get_best_models(Path(args.models)) 
-            model_path = model_paths.pop(0)
-            parameter_path = parameter_paths.pop(0)
-
-            world.hud._drive_model_parameters = get_parameter_text(parameter_path)
-            world.hud._drive_model_name = str(model_path).split('/')[-1]
-            model = CNNKeras() 
-            model.load_model(model_path)
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths)        
-        
-        elif args.model is not None:
+        model = None
+        if args.model is not None:
             model = CNNKeras()
             model.load_model(args.model)
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)
-        else: 
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick)
+
+        world = World(client.get_world(), hud, history, args.filter, settings)
+        
+        controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)
 
         clock = pygame.time.Clock()
 
         while True:
-            clock.tick_busy_loop(60)
+            sim_world.tick()
+            clock.tick_busy_loop(hud.server_fps_realtime)
             if controller.parse_events(client, world, clock):
                 return
-            
             world.tick(clock)
             world.render(display)
             pygame.display.flip()
@@ -1278,12 +1189,6 @@ def main():
         dest='model',
         default=None,
         help='model file for autonomouse driving')
-    argparser.add_argument(
-        '-ms',
-        '--models',
-        dest='models',
-        default=None,
-        help='folders with model tests')
     argparser.add_argument(
         '-j',
         '--joystick',
