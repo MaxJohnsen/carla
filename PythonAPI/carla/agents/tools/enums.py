@@ -25,4 +25,3 @@ class Enviornment(Enum):
     
 class NoiseMode(Enum):
     RANDOM = 0
-    IMPULSE = 1

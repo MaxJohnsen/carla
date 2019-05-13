@@ -21,7 +21,6 @@ Use ARROWS or WASD keys for control.
     Q            : toggle reverse
     Space        : hand-brake
 
-
     CONTROL MODE 
     ----------------------------------------
     O            : model driving             
@@ -31,10 +30,10 @@ Use ARROWS or WASD keys for control.
     OTHERS 
     ----------------------------------------
     R            : toggle recording images to disk
-    U:           : change model
+    U            : change model
     I            : toggle noise
     N            : next spawn point
-    B            : previous spawn poiny
+    B            : previous spawn point
     Backspace    : restart episode/next route
     
     ESC          : quit
@@ -198,8 +197,8 @@ class World(object):
         self.camera_manager = None
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
-        self._spawn_point_start = 237
-        self._spawn_point_destination = 17
+        self._spawn_point_start = 155
+        self._spawn_point_destination = 115
         self._actor_filter = actor_filter
         self._routes = None 
         self._current_route_num = None
@@ -335,7 +334,6 @@ class KeyboardControl(object):
 
         self._noise_enabled = False
         self._noise_amount = None
-        self._noise_mode = None 
 
         self._impulse_count = 0
 
@@ -353,7 +351,6 @@ class KeyboardControl(object):
     def _initialize_settings(self, settings):
         self._control_type = ControlType[settings.get("Carla", "ControlType", fallback="MANUAL")]
         self._noise_amount = float(settings.get("Carla", "Noise", fallback="0"))
-        self._noise_mode = NoiseMode[settings.get("Carla", "NoiseMode", fallback="IMPULSE")]
 
     def _initialize_steering_wheel(self):
         pygame.joystick.init()
@@ -407,14 +404,6 @@ class KeyboardControl(object):
                     world.hud.toggle_info()
                 elif event.key == K_h:
                     world.hud.help.toggle()
-                elif event.key == K_i:
-                    self._noise_enabled = not self._noise_enabled
-                    if not self._noise_enabled: 
-                        self._impulse_count = 0
-                    noise_status = "Enabled" if self._noise_enabled else "Disabled"
-                    world.hud.notification('Noise: ' + noise_status)
-
-
                 elif event.key == K_TAB:
                     world.camera_manager.toggle_camera()
                 elif event.key == K_n:
@@ -427,6 +416,10 @@ class KeyboardControl(object):
                     world.next_weather(reverse=True)
                 elif event.key == K_c:
                     world.next_weather()
+                elif event.key == K_i:
+                    self._noise_enabled = not self._noise_enabled
+                    noise_status = "Enabled" if self._noise_enabled else "Disabled"
+                    world.hud.notification('Noise: ' + noise_status)
                 elif event.key == K_BACKQUOTE:
                     world.camera_manager.next_sensor()
                 elif event.key > K_0 and event.key <= K_9:
@@ -491,7 +484,8 @@ class KeyboardControl(object):
             # Change route if client AP has reached its destination
             position = world.player.get_transform().location
             destination  = world.map.get_spawn_points()[world._spawn_point_destination].location
-            if abs(position.x-destination.x) < 30 and abs(position.y-destination.y)<30:
+            #print("x: " + str(round(abs(position.x-destination.x), 2)) + "     -     y: " + str(round(abs(position.y-destination.y), 2)))
+            if abs(position.x-destination.x) < 3 and abs(position.y-destination.y)<3:
                 world.hud.notification("Route Complete")
                 world.restart()
                 if world._quit_next:
@@ -611,19 +605,8 @@ class KeyboardControl(object):
         self._control.brake = client_autopilot_control.brake
         self._control.throttle = client_autopilot_control.throttle
         if self._noise_enabled: 
-
-            if self._noise_mode == NoiseMode.RANDOM:
-                noise = np.random.uniform(-self._noise_amount, self._noise_amount)
-                self._control.steer = client_autopilot_control.steer + noise
-            elif self._noise_mode == NoiseMode.IMPULSE:
-                impulse_length = 10
-                if self._impulse_count < impulse_length: 
-                    self._control.steer = client_autopilot_control.steer + self._noise_amount # TODO: this is only left noise, add right noise as well
-                    self._impulse_count +=1
-
-                else:
-                    self._control.steer = client_autopilot_control.steer * 0.6
-
+            noise = np.random.uniform(-self._noise_amount, self._noise_amount)
+            self._control.steer = client_autopilot_control.steer + noise
 
         else:
             self._control.steer = client_autopilot_control.steer 
