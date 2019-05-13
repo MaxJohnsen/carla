@@ -244,7 +244,6 @@ class World(object):
         self.hud._episode_start_time = self.hud.simulation_time
 
         self.history._initiate() 
-        print("restart")
 
         # Keep same camera config if the camera manager exists.
         cam_index = self.camera_manager._index if self.camera_manager is not None else 0
@@ -361,9 +360,7 @@ class KeyboardControl(object):
         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
         self._steer_cache = 0.0
 
-        world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
-
-        # initialize steering wheel
+         # initialize steering wheel
         if self._steering_wheel_enabled:
             pygame.joystick.init()
 
@@ -500,7 +497,6 @@ class KeyboardControl(object):
                 
                 return True
             if world._auto_timeout != 0 and world.hud.simulation_time - world.hud._episode_start_time > world._auto_timeout: 
-                print(world.hud.simulation_time, world.hud._episode_start_time)
                 world.restart()
             
         if self._control_type == ControlType.MANUAL:
