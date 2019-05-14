@@ -413,14 +413,11 @@ class KeyboardControl(object):
         self._handbrake_idx = int(
             self._parser.get('G29 Racing Wheel', 'handbrake'))
 
-<<<<<<< HEAD
     def _add_to_steer_history(self, steer):
         self._steer_history.insert(0, steer)
         if len(self._steer_history) > self._history_size:
             self._steer_history.pop()
 
-=======
->>>>>>> 3482f6d989759e6a9ecc6cad86f88bda72a8b8b1
     def parse_events(self, client, world, clock):
         print(self._is_valid_lane_change(RoadOption.CHANGELANERIGHT, world))
 
