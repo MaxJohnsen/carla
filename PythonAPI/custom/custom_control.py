@@ -419,7 +419,6 @@ class KeyboardControl(object):
             self._steer_history.pop()
 
     def parse_events(self, client, world, clock):
-        print(self._is_valid_lane_change(RoadOption.CHANGELANERIGHT, world))
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -501,10 +500,10 @@ class KeyboardControl(object):
                     world._client_ap_active = not world._client_ap_active 
                 elif event.key == K_KP1:
                     if self._control_type == ControlType.DRIVE_MODEL:
-                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history),1)
+                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, 1)
                 elif event.key == K_KP3:
                     if self._control_type == ControlType.DRIVE_MODEL:
-                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history),-1)
+                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, -1)
 
         world.history.control_type = self._control_type
 
@@ -538,13 +537,11 @@ class KeyboardControl(object):
                     return True
         
         if self._lane_change_activated != None:
-            activated, original_steer, direction = self._lane_change_activated
-            print(original_steer)
-            if activated + 1.5 > world.hud.simulation_time:
+            activated, original_steer, original_lane, direction = self._lane_change_activated
+            current_lane = world.map.get_waypoint(world.player.get_location()).lane_id
+            if abs(current_lane) == abs(original_lane):
                 self._control.steer =  original_steer - 0.015*direction
-            elif activated + 2.2 > world.hud.simulation_time:
-                self._control.steer = original_steer + 0.02*direction
-            else:
+            else
                 self._lane_change_activated = None
                 print("Complete")
         
