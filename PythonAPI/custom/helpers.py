@@ -1,6 +1,10 @@
 from glob import glob
 from pathlib import Path
 import re 
+import carla
+
+from agents.tools.enums import RoadOption
+from agents.tools.misc import distance_vehicle
 
 
 def get_best_models(models_path): 
@@ -59,7 +63,7 @@ def get_parameter_text(path):
     return params
     
 
-def _is_valid_lane_change(self, road_option, world, proximity_threshold=8): 
+def is_valid_lane_change(road_option, world, proximity_threshold=8): 
 
         if road_option != RoadOption.CHANGELANELEFT and road_option != RoadOption.CHANGELANERIGHT: 
             print("ERROR: road option is not a lane change")

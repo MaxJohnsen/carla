@@ -108,6 +108,7 @@ from agents.navigation.basic_agent import BasicAgent
 from agents.tools.enums import RoadOption, Enviornment, ControlType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
+from helpers import is_valid_lane_change
 
 import argparse
 import collections
@@ -357,6 +358,7 @@ class KeyboardControl(object):
         self._noise_amount = None
 
         self._lane_change_activated = None
+        self._lane_change_started = False
         self._history_size = 10
         self._steer_history = []
 
@@ -500,10 +502,10 @@ class KeyboardControl(object):
                     world._client_ap_active = not world._client_ap_active 
                 elif event.key == K_KP1:
                     if self._control_type == ControlType.DRIVE_MODEL:
-                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, 1)
+                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANELEFT)
                 elif event.key == K_KP3:
                     if self._control_type == ControlType.DRIVE_MODEL:
-                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, -1)
+                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANERIGHT)
 
         world.history.control_type = self._control_type
 
@@ -537,14 +539,20 @@ class KeyboardControl(object):
                     return True
         
         if self._lane_change_activated != None:
-            activated, original_steer, original_lane, direction = self._lane_change_activated
-            current_lane = world.map.get_waypoint(world.player.get_location()).lane_id
-            if abs(current_lane) == abs(original_lane):
-                self._control.steer =  original_steer - 0.015*direction
-            else:
-                self._lane_change_activated = None
-                print("Complete")
-        
+
+            activated, original_steer, original_lane, option = self._lane_change_activated
+            
+            if self._lane_change_started or is_valid_lane_change(option,world):
+                self._lane_change_started = True
+                direction = 1 if option == RoadOption.CHANGELANELEFT else -1
+                current_lane = world.map.get_waypoint(world.player.get_location()).lane_id
+                if abs(current_lane) == abs(original_lane):
+                    self._control.steer =  original_steer - 0.015*direction
+                else:
+                    self._lane_change_activated = None
+                    self._lane_change_started = False
+                    print("Complete")
+            
         self._add_to_steer_history(self._control.steer)
         world.player.apply_control(self._control)
 
