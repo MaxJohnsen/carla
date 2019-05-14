@@ -541,7 +541,7 @@ class KeyboardControl(object):
             current_lane = world.map.get_waypoint(world.player.get_location()).lane_id
             if abs(current_lane) == abs(original_lane):
                 self._control.steer =  original_steer - 0.015*direction
-            else
+            else:
                 self._lane_change_activated = None
                 print("Complete")
         
