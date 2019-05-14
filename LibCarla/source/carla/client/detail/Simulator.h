@@ -252,6 +252,10 @@ namespace detail {
       _client.SetActorAutopilot(vehicle.GetId(), enabled);
     }
 
+    void SetVehicleFixedRoute(Vehicle &vehicle, const TArray<FVector> &Waypoints) {
+      _client.SetActorAutopilot(vehicle.GetId(), Waypoints);
+    }
+
     void ApplyControlToVehicle(Vehicle &vehicle, const rpc::VehicleControl &control) {
       _client.ApplyControlToVehicle(vehicle.GetId(), control);
     }

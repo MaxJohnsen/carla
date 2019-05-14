@@ -199,7 +199,7 @@ void ARoutePlanner::OnTriggerBeginOverlap(
   auto *Controller = GetVehicleController(OtherActor);
   if (Controller != nullptr)
   {
-    AssignRandomRoute(*Controller);
+    //AssignRandomRoute(*Controller);
   }
 }
 

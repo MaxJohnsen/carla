@@ -584,6 +584,29 @@ void FCarlaServer::FPimpl::BindActions()
     return R<void>::Success();
   };
 
+    BIND_SYNC(set_actor_fixed_route) << [this](
+      cr::ActorId ActorId,
+      TArray<FVector> &Waypoints) -> R<void>
+  {
+    REQUIRE_CARLA_EPISODE();
+    auto ActorView = Episode->FindActor(ActorId);
+    if (!ActorView.IsValid())
+    {
+      RESPOND_ERROR("unable to set autopilot: actor not found");
+    }
+    auto Vehicle = Cast<ACarlaWheeledVehicle>(ActorView.GetActor());
+    if (Vehicle == nullptr)
+    {
+      RESPOND_ERROR("unable to set autopilot: actor does not support autopilot");
+    }
+    auto Controller = Cast<AWheeledVehicleAIController>(Vehicle->GetController());
+    if (Controller == nullptr)
+    {
+      RESPOND_ERROR("unable to set autopilot: vehicle controller does not support autopilot");
+    }
+    Controller->SetFixedRoute(Waypoints)
+    return R<void>::Success();
+  };
   // ~~ Traffic lights ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
   BIND_SYNC(set_traffic_light_state) << [this](

@@ -232,6 +232,10 @@ namespace detail {
     _pimpl->AsyncCall("set_actor_autopilot", vehicle, enabled);
   }
 
+  void Client::SetActorFixedRoute(rpc::ActorId vehicle, const TArray<FVector> &Waypoints) {
+    _pimpl->AsyncCall("set_actor_fixed_route", vehicle, Waypoints);
+  }
+
   void Client::ApplyControlToVehicle(rpc::ActorId vehicle, const rpc::VehicleControl &control) {
     _pimpl->AsyncCall("apply_control_to_vehicle", vehicle, control);
   }

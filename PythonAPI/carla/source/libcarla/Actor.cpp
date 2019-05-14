@@ -43,6 +43,30 @@ static auto GetGroupTrafficLights(carla::client::TrafficLight &self) {
   return result;
 }
 
+static void SetFixedRoute(const carla::client::Vehicle &self, boost::python::list waypoints){
+  boost::python::ssize_t len = boost::python::len(waypoints);
+
+  TArray<FVector> WayPoints;
+  const auto Size = Route->GetNumberOfSplinePoints();
+  if (len > 1)
+  {
+    WayPoints.Reserve(len);
+      for(int i=0; i<len;i++){
+        Waypoint waypoint = boost::python::extract<cc:Waypoint>(fea1[i]);
+        UE_LOG(LogCarla, Error, TEXT("Testtesttest"));
+      }
+  }
+
+  return s;
+}
+
+std::vector<Location> py_list_to_std_vector( const boost::python::object& iterable )
+{
+    return std::vector< T >( boost::python::stl_input_iterator< T >( iterable ),
+                             boost::python::stl_input_iterator< T >( ) );
+}
+
+
 void export_actor() {
   using namespace boost::python;
   namespace cc = carla::client;
@@ -90,6 +114,7 @@ void export_actor() {
     .def("apply_physics_control", &cc::Vehicle::ApplyPhysicsControl, (arg("physics_control")))
     .def("get_physics_control", CONST_CALL_WITHOUT_GIL(cc::Vehicle, GetPhysicsControl))
     .def("set_autopilot", &cc::Vehicle::SetAutopilot, (arg("enabled") = true))
+    .def("set_fixed_route", &SetFixedRoute, (args("waypoints")))
     .def("get_speed_limit", &cc::Vehicle::GetSpeedLimit)
     .def("get_traffic_light_state", &cc::Vehicle::GetTrafficLightState)
     .def("is_at_traffic_light", &cc::Vehicle::IsAtTrafficLight)

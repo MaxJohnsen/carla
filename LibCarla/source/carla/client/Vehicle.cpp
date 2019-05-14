@@ -32,6 +32,10 @@ namespace client {
     GetEpisode().Lock()->SetVehicleAutopilot(*this, enabled);
   }
 
+  void Vehicle::SetFixedRoute(const TArray<FVector> &Waypoints) {
+    GetEpisode().Lock()->SetVehicleFixedRoute(*this, Waypoints);
+  }
+
   void Vehicle::ApplyControl(const Control &control) {
     if (!_is_control_sticky || (control != _control)) {
       GetEpisode().Lock()->ApplyControlToVehicle(*this, control);
