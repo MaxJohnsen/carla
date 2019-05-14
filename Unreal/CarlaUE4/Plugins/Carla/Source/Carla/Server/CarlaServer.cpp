@@ -604,7 +604,7 @@ void FCarlaServer::FPimpl::BindActions()
     {
       RESPOND_ERROR("unable to set autopilot: vehicle controller does not support autopilot");
     }
-    Controller->SetFixedRoute(Waypoints)
+    Controller->SetFixedRoute(Waypoints);
     return R<void>::Success();
   };
   // ~~ Traffic lights ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
