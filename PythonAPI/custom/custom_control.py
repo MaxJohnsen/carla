@@ -241,7 +241,6 @@ class World(object):
         
 
     def restart(self):
-        self.hud._episode_start_time = self.hud.simulation_time
 
         self.history._initiate() 
 
@@ -298,6 +297,7 @@ class World(object):
         if self._num_vehicles is not None and self._spawning_radius is not None: 
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles, self._spawning_radius)
 
+        self.hud._episode_start_time = self.hud.simulation_time
 
     def next_weather(self, reverse=False):
         self._weather_index += -1 if reverse else 1
@@ -1018,7 +1018,7 @@ class CameraManager(object):
             'Recording %s' % ('On' if self._recording else 'Off'))
 
     def tick(self):
-        if self._recording:
+        if self._recording and self._hud.simulation_time-self._hud._episode_start_time > 1.5:
             if self._frame_number % self._capture_rate == 0:
                 self._history.record_frame(self._parent, self._client_ap)
             self._frame_number += 1
@@ -1182,9 +1182,9 @@ def game_loop(args, settings):
     try:
         client = carla.Client(args.host, args.port)
         sim_world = client.get_world()
-        world_settings = sim_world.get_settings()
-        world_settings.synchronous_mode = True
-        sim_world.apply_settings(world_settings)
+        #world_settings = sim_world.get_settings()
+        #world_settings.synchronous_mode = True
+        #sim_world.apply_settings(world_settings)
 
         client.set_timeout(15.0)
 
@@ -1212,8 +1212,8 @@ def game_loop(args, settings):
         clock = pygame.time.Clock()
 
         while True:
-            sim_world.tick()
-            clock.tick_busy_loop(hud.server_fps_realtime)
+            #sim_world.tick()
+            clock.tick(hud.server_fps_realtime)
             if controller.parse_events(client, world, clock):
                 return
             world.tick(clock)
