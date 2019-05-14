@@ -355,6 +355,10 @@ class KeyboardControl(object):
         self._noise_enabled = False
         self._noise_amount = None
 
+        self._lane_change_activated = None
+        self._history_size = 10
+        self._steer_history = []
+
         self._initialize_settings(settings)
         self._control = carla.VehicleControl()
         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
@@ -407,6 +411,10 @@ class KeyboardControl(object):
         self._handbrake_idx = int(
             self._parser.get('G29 Racing Wheel', 'handbrake'))
 
+    def _add_to_steer_history(self, steer):
+        self._steer_history.insert(0, steer)
+        if len(self._steer_history) > self._history_size:
+            self._steer_history.pop()
 
     def parse_events(self, client, world, clock):
         
@@ -488,8 +496,15 @@ class KeyboardControl(object):
                     world.hud.notification('Control Mode: Client Autopilot')
                     world.player.set_autopilot(False)
                     world._client_ap_active = not world._client_ap_active 
-                
+                elif event.key == K_KP1:
+                    if self._control_type == ControlType.DRIVE_MODEL:
+                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history),1)
+                elif event.key == K_KP3:
+                    if self._control_type == ControlType.DRIVE_MODEL:
+                        self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history),-1)
+
         world.history.control_type = self._control_type
+
 
         if self._control_type == ControlType.SERVER_AP: 
             world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
@@ -497,17 +512,14 @@ class KeyboardControl(object):
                 
                 return True
             if world._auto_timeout != 0 and world.hud.simulation_time - world.hud._episode_start_time > world._auto_timeout: 
-                world.restart()
-            
-        if self._control_type == ControlType.MANUAL:
+                world.restart()     
+        elif self._control_type == ControlType.MANUAL:
             if self._steering_wheel_enabled: 
                 self._parse_vehicle_wheel()
             else:
                 self._parse_vehicle_keys(world, pygame.key.get_pressed(),
                                             clock.get_time())
             self._control.reverse = self._control.gear < 0
-
-
         elif self._control_type == ControlType.DRIVE_MODEL:
             self._parse_drive_model_commands(world)
         elif self._control_type == ControlType.CLIENT_AP:
@@ -521,6 +533,19 @@ class KeyboardControl(object):
                 world.restart()
                 if world._quit_next:
                     return True
+        
+        if self._lane_change_activated != None:
+            activated, original_steer, direction = self._lane_change_activated
+            print(original_steer)
+            if activated + 1.5 > world.hud.simulation_time:
+                self._control.steer =  original_steer - 0.015*direction
+            elif activated + 2.2 > world.hud.simulation_time:
+                self._control.steer = original_steer + 0.02*direction
+            else:
+                self._lane_change_activated = None
+                print("Complete")
+        
+        self._add_to_steer_history(self._control.steer)
         world.player.apply_control(self._control)
 
         
@@ -602,7 +627,7 @@ class KeyboardControl(object):
             self._steer_cache = 0.0
 
         # Update HLC 
-        if keys[K_KP1]: 
+        """if keys[K_KP1]: 
             world.history.update_hlc(RoadOption.CHANGELANELEFT.value)
         elif keys[K_KP3]: 
             world.history.update_hlc(RoadOption.CHANGELANERIGHT.value)
@@ -616,7 +641,7 @@ class KeyboardControl(object):
             world.history.update_hlc(RoadOption.STRAIGHT.value)
         
         else: 
-            world.history.update_hlc(RoadOption.LANEFOLLOW.value)
+            world.history.update_hlc(RoadOption.LANEFOLLOW.value)"""
 
 
         self._steer_cache = min(0.7, max(-0.7, self._steer_cache))
