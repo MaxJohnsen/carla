@@ -638,58 +638,6 @@ class KeyboardControl(object):
 
         else:
             self._control.steer = client_autopilot_control.steer 
-            
-    def _is_valid_lane_change(self, road_option, world, proximity_threshold=8): 
-
-        if road_option != RoadOption.CHANGELANELEFT and road_option != RoadOption.CHANGELANERIGHT: 
-            print("ERROR: road option is not a lane change")
-            return False 
-        
-        player_waypoint = world.map.get_waypoint(world.player.get_location())
-        player_lane_id = player_waypoint.lane_id
-        player_transform = world.player.get_transform()
-        player_yaw = player_transform.rotation.yaw
-        
-        vehicle_list = world.world.get_actors().filter('vehicle.*')     
-
-        # Lane change left  
-        if road_option == RoadOption.CHANGELANELEFT: 
-            # check if lane change is valid 
-            if not player_waypoint.lane_change & carla.LaneChange.Left:
-                print("Traffic rules does not allow left lane change here")
-                return False  
-
-            # Only look at vehicles in left adjecent lane 
-            for vehicle in vehicle_list: 
-                #vehicle = actorvehicle_list_list.find(vehicle_id)
-                vehicle_lane_id = world.map.get_waypoint(vehicle.get_location()).lane_id
-                # Check if lane_id is in the same driving direction 
-                if (player_lane_id < 0 and vehicle_lane_id <0) or (player_lane_id > 0 and vehicle_lane_id > 0):
-                    if abs(player_lane_id)-abs(vehicle_lane_id) == 1: 
-                        # check the vehicle|s proximity to the player
-                        vehicle_waypoint = world.map.get_waypoint(vehicle.get_location())
-                        if distance_vehicle(vehicle_waypoint, player_transform) < proximity_threshold:   
-                            return False  
-        # Lane change right 
-        else: 
-            # check if lane change is valid 
-            if not player_waypoint.lane_change & carla.LaneChange.Right:
-                print("Traffic rules does not allow right lane change here")
-                return False 
-            # Only look for vehicles in right adjencent lane 
-            for vehicle in vehicle_list:
-                #vehicle = vehicle_list.find(vehicle_id)
-                vehicle_lane_id = world.map.get_waypoint(vehicle.get_location()).lane_id
-                # Check if lane_id is in the same driving direction 
-                if (player_lane_id < 0 and vehicle_lane_id <0) or (player_lane_id > 0 and vehicle_lane_id > 0):
-                    if abs(player_lane_id)-abs(vehicle_lane_id) == -1: 
-
-                        # check the vehicle|s proximity to the player
-                        vehicle_waypoint = world.map.get_waypoint(vehicle.get_location())
-                        if distance_vehicle(vehicle_waypoint, player_transform) < proximity_threshold:   
-                            return False           
-        return True            
-
 
     @staticmethod
     def _is_quit_shortcut(key):
