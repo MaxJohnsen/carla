@@ -44,3 +44,4 @@ _site
 core
 profiler.csv
 models/
+.h5*
