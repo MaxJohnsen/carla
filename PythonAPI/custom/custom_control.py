@@ -596,6 +596,9 @@ class KeyboardControl(object):
     def _parse_drive_model_commands(self, world):
         images = {}
         info = {}
+        
+        if "forward_center_rgb" not int world.history._latest_images:
+            return
 
         images["forward_center_rgb"] = world.history._latest_images[
             "forward_center_rgb"]
