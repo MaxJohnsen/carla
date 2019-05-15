@@ -555,8 +555,8 @@ class KeyboardControl(object):
                     self._lane_change_activated = None
                     self._lane_change_started = False
                     print("Complete")
-            
-        self._add_to_steer_history(self._control.steer)
+        else:    
+            self._add_to_steer_history(self._control.steer)
         world.player.apply_control(self._control)
 
         
