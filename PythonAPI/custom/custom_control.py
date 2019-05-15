@@ -505,9 +505,11 @@ class KeyboardControl(object):
                         world.hud.notification('No more models left')
                 elif event.key == K_KP1:
                     if self._control_type == ControlType.DRIVE_MODEL:
+                        world.history.update_hlc(RoadOption.CHANGELANELEFT)
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANELEFT)
                 elif event.key == K_KP3:
                     if self._control_type == ControlType.DRIVE_MODEL:
+                        world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANERIGHT)
 
         world.history.control_type = self._control_type
@@ -542,9 +544,7 @@ class KeyboardControl(object):
                     return True
         
         if self._lane_change_activated != None:
-
             activated, original_steer, original_lane, option = self._lane_change_activated
-            
             if self._lane_change_started or is_valid_lane_change(option,world):
                 self._lane_change_started = True
                 direction = 1 if option == RoadOption.CHANGELANELEFT else -1
@@ -554,7 +554,7 @@ class KeyboardControl(object):
                 else:
                     self._lane_change_activated = None
                     self._lane_change_started = False
-                    print("Complete")
+                    world.history.update_hlc(RoadOption.LANEFOLLOW)
         else:    
             self._add_to_steer_history(self._control.steer)
         world.player.apply_control(self._control)
@@ -1105,6 +1105,7 @@ class History:
         self._active = False
         self._latest_client_autopilot_control = None
         self.control_type = None
+        self._latest_hlc = None
 
 
     def _initiate(self):
@@ -1124,7 +1125,7 @@ class History:
         self._measurements_history = []
         self._frame_number = 0
         self._latest_client_autopilot_control = None
-        self._latest_hlc = -1 
+        self._latest_hlc = RoadOption.LANEFOLLOW
 
     def update_image(self, image, position, sensor_type):
         if image.raw_data:
@@ -1138,7 +1139,6 @@ class History:
         self._latest_hlc = hlc
 
     def record_frame(self, player, client_ap):
-        
         images = []
         self._frame_number += 1
 
@@ -1151,7 +1151,7 @@ class History:
                 return
             client_ap_c = self._latest_client_autopilot_control
 
-            hlc = client_ap._local_planner._target_road_option.value
+            hlc = client_ap._local_planner._target_road_option
         else:
             client_ap_c = None
             hlc = self._latest_hlc
@@ -1184,7 +1184,7 @@ class History:
                 self.control_type.value,
                 red_light,
                 player.get_speed_limit() / 3.6, 
-                hlc, 
+                hlc.value, 
                 Enviornment.HIGHWAY.value
             ],
                       index=self._driving_log.columns),
