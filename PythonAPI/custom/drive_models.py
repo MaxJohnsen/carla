@@ -72,7 +72,7 @@ class LSTMKeras(ModelInterface):
         self._model = None
         self._models_path = None 
         self._img_history = []
-        self._info_history = []
+        self._info_history = [] 
         self._hlc_history = []
         self._late_hlc = late_hlc
         self._seq_length = seq_length

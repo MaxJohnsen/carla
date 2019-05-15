@@ -108,7 +108,7 @@ from agents.navigation.basic_agent import BasicAgent
 from agents.tools.enums import RoadOption, Enviornment, ControlType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
-from helpers import is_valid_lane_change
+from helpers import is_valid_lane_change, get_best_models, get_parameter_text
 
 import argparse
 import collections
@@ -151,6 +151,7 @@ try:
     from pygame.locals import K_q
     from pygame.locals import K_r
     from pygame.locals import K_s
+    from pygame.locals import K_u
     from pygame.locals import K_w
     from pygame.locals import K_KP1
     from pygame.locals import K_KP3
@@ -349,8 +350,11 @@ class World(object):
 
 
 class KeyboardControl(object):
-    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None):
+    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None, model_paths=None, parameter_paths=None):
         self._drive_model = drive_model
+        self._model_paths = model_paths
+        self._parameter_paths = parameter_paths
+
         self._steering_wheel_enabled = use_steering_wheel
         self._control_type = None 
 
@@ -369,31 +373,14 @@ class KeyboardControl(object):
 
          # initialize steering wheel
         if self._steering_wheel_enabled:
-            pygame.joystick.init()
-
-            joystick_count = pygame.joystick.get_count()
-            if joystick_count > 1:
-                raise ValueError("Please Connect Just One Joystick")
-
-            self._joystick = pygame.joystick.Joystick(0)
-            self._joystick.init()
-
-            self._parser = ConfigParser()
-            self._parser.read('wheel_config.ini')
-            self._steer_idx = int(
-                self._parser.get('G29 Racing Wheel', 'steering_wheel'))
-            self._throttle_idx = int(
-                self._parser.get('G29 Racing Wheel', 'throttle'))
-            self._brake_idx = int(self._parser.get('G29 Racing Wheel', 'brake'))
-            self._reverse_idx = int(self._parser.get('G29 Racing Wheel', 'reverse'))
-            self._handbrake_idx = int(
-                self._parser.get('G29 Racing Wheel', 'handbrake'))
+            self._initialize_steering_wheel()
 
     def _initialize_settings(self, settings):
         self._control_type = ControlType[settings.get("Carla", "ControlType", fallback="MANUAL")]
         self._noise_amount = float(settings.get("Carla", "Noise", fallback="0"))
         if self._drive_model is None and self._control_type == ControlType.DRIVE_MODEL: 
             self._control_type = ControlType.MANUAL
+    
     def _initialize_steering_wheel(self):
         pygame.joystick.init()
 
@@ -500,6 +487,22 @@ class KeyboardControl(object):
                     world.hud.notification('Control Mode: Client Autopilot')
                     world.player.set_autopilot(False)
                     world._client_ap_active = not world._client_ap_active 
+                elif event.key == K_u: 
+                    # If multiple model testing is activated and there are remaining models to test 
+                    if self._model_paths is not None and len(self._model_paths)>0: 
+                        drive_model_parameters = self._parameter_paths.pop(0)
+                        drive_model_path = self._model_paths.pop(0) 
+                        model = CNNKeras()
+                        model.load_model(drive_model_path)
+                        self._drive_model = model
+                        world.restart()
+
+                        world.hud.notification('Next model')
+                        world.hud._drive_model_parameters = get_parameter_text(drive_model_parameters)
+                        world.hud._drive_model_name = str(drive_model_path).split('/')[-1]
+
+                    else: 
+                        world.hud.notification('No more models left')
                 elif event.key == K_KP1:
                     if self._control_type == ControlType.DRIVE_MODEL:
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANELEFT)
@@ -700,6 +703,8 @@ class HUD(object):
         self._info_text = []
         self._server_clock = pygame.time.Clock()
         self._episode_start_time = 0
+        self._drive_model_parameters = []
+        self._drive_model_name = None
 
     def on_world_tick(self, timestamp):
         self._server_clock.tick()
@@ -757,12 +762,16 @@ class HUD(object):
                                     -1: 'R',
                                     0: 'N'
                                 }.get(c.gear, c.gear)]
-        elif isinstance(c, carla.WalkerControl):
-            self._info_text += [('Speed:', c.speed, 0.0, 5.556),
-                                ('Jump:', c.jump)]
         self._info_text += [
             'Number of vehicles: % 8d' % len(vehicles)
         ]
+        if self._drive_model_name is not None: 
+            self._info_text += ['']
+            self._info_text += ['Drive model: %s' % self._drive_model_name]
+
+        if len(self._drive_model_parameters)> 0: 
+            for param in self._drive_model_parameters: 
+                self._info_text += [param]
         self._info_text.append(('Speed: ', '%.0f/%.0f'%(speed, speed_limit)))
 
 
@@ -1237,7 +1246,26 @@ def game_loop(args, settings):
             args.filter, 
             settings)
         
-        controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)
+        # Program can either be called with a folder of models to try, or one specific model file to test 
+        if args.models is not None:
+            model_paths, parameter_paths = get_best_models(Path(args.models)) 
+            model_path = model_paths.pop(0)
+            parameter_path = parameter_paths.pop(0)
+
+            world.hud._drive_model_parameters = get_parameter_text(parameter_path)
+            world.hud._drive_model_name = str(model_path).split('/')[-1]
+            model = CNNKeras() 
+            model.load_model(model_path)
+            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths)        
+
+        elif args.model is not None:
+            model = CNNKeras()
+            model.load_model(args.model)
+            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)        
+        else:
+            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)
+ 
+
 
         clock = pygame.time.Clock()
 
@@ -1310,6 +1338,12 @@ def main():
         dest='model',
         default=None,
         help='model file for autonomouse driving')
+    argparser.add_argument(
+        '-ms',
+        '--models',
+        dest='models',
+        default=None,
+        help='folders with model tests')        
     argparser.add_argument(
         '-j',
         '--joystick',

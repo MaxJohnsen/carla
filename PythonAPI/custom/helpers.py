@@ -21,7 +21,7 @@ def get_best_models(models_path):
     # For each model 
     for model_path in sorted(glob(str(models_path / "*"))):
         min_val_loss = float('inf')
-        miv_val_loss_model_path = ""
+        min_val_loss_model_path = ""
         # For each file in model folder 
         for model_file_path in glob(str(Path(model_path) / "*.h5")):
             # Get val loss of model
