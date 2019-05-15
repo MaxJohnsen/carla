@@ -158,7 +158,9 @@ try:
     from pygame.locals import K_KP4
     from pygame.locals import K_KP5
     from pygame.locals import K_KP6
+    from pygame.locals import K_KP7
     from pygame.locals import K_KP8
+    from pygame.locals import K_KP9
     from pygame.locals import K_MINUS
     from pygame.locals import K_EQUALS
 except ImportError:
@@ -365,6 +367,7 @@ class KeyboardControl(object):
         self._lane_change_started = False
         self._history_size = 10
         self._steer_history = []
+        self._active_hlc = RoadOption.LANEFOLLOW
 
         self._initialize_settings(settings)
         self._control = carla.VehicleControl()
@@ -511,6 +514,12 @@ class KeyboardControl(object):
                     if self._control_type == ControlType.DRIVE_MODEL:
                         world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANERIGHT)
+                elif event.key == K_KP5:
+                    self._active_hlc = RoadOption.LANEFOLLOW                
+                elif event.key == K_KP7:
+                    self._active_hlc = RoadOption.CHANGELANELEFT
+                elif event.key == K_KP9:
+                    self._active_hlc = RoadOption.CHANGELANERIGHT
 
         world.history.control_type = self._control_type
 
@@ -602,6 +611,10 @@ class KeyboardControl(object):
 
         images["forward_center_rgb"] = world.history._latest_images[
             "forward_center_rgb"]
+        images["left_center_rgb"] = world.history._latest_images[
+            "left_center_rgb"]
+        images["right_center_rgb"] = world.history._latest_images[
+            "right_center_rgb"]
 
         player = world.player
 
@@ -613,7 +626,7 @@ class KeyboardControl(object):
         info["speed"] = speed
         info["traffic_light"] = red_light
         info["speed_limit"] = player.get_speed_limit() / 3.6
-        info["hlc"] = 0
+        info["hlc"] = self._active_hlc
         info["environment"] = 0
 
         steer = 0

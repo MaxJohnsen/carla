@@ -28,7 +28,7 @@ class CNNKeras(ModelInterface):
         set_session(sess)
         self.parameter_path = None 
         self._steer_scale = 1.0
-
+        self.hlc_one_hot = { 1: [1,0,0,0,0,0], 2:[0,1,0,0,0,0], 3:[0,0,1,0,0,0], 4:[0,0,0,1,0,0], 5:[0,0,0,0,1,0], 6:[0,0,0,0,0,1]}
 
     
     def load_model(self, path):
@@ -44,20 +44,26 @@ class CNNKeras(ModelInterface):
         if self._model is None:
             return False
 
-        img_input = cv2.cvtColor(images["forward_center_rgb"],
+        img_center = cv2.cvtColor(images["forward_center_rgb"],
                                  cv2.COLOR_BGR2LAB)
-
+        img_left = cv2.cvtColor(images["left_center_rgb"],
+                                 cv2.COLOR_BGR2LAB)
+        img_right = cv2.cvtColor(images["right_center_rgb"],
+                                 cv2.COLOR_BGR2LAB)
         info_input = [
             float(info["speed"] * 3.6 / 100),
             float(info["speed_limit"] * 3.6 / 100),
             int(info["traffic_light"])
         ]
 
-        # hlc_input = self._one_hot_hlc[int(info["hlc"])]
+        hlc_input = self.hlc_one_hot[info["hlc"].value]
 
         prediction = self._model.predict({
-            "image_input": np.array([img_input]),
-            "info_input": np.array([info_input])
+            "image_center_input": np.array([img_center]),
+            "image_left_input": np.array([img_left]),
+            "image_right_input": np.array([img_right]),
+            "info_input": np.array([info_input]),
+            "hlc_input": np.array([hlc_input])
         })
 
         prediction = prediction[0]
