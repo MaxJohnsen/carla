@@ -35,9 +35,9 @@ class VehicleSpawner(object):
         self._spawned_vehicles = []
 
     
-    def spawn_nearby(self, hero_spawn_point_index, number_of_vehicles, radius):
+    def spawn_nearby(self, hero_spawn_point_index, number_of_vehicles_min,number_of_vehicles_max, radius):
 
-        number_of_vehicles = random.randint(0,number_of_vehicles)
+        number_of_vehicles = random.randint(number_of_vehicles_min,number_of_vehicles_max)
         hero_spawn_point = self.spawn_points[hero_spawn_point_index]
         hero_x = hero_spawn_point.location.x
         hero_y = hero_spawn_point.location.y

@@ -215,7 +215,8 @@ class World(object):
         self._current_route_num = None
         self._tot_route_num = None 
         self._auto_record = None 
-        self._num_vehicles = None
+        self._num_vehicles_min = None
+        self._num_vehicles_max = None
         self._spawning_radius = None
         self._auto_timeout = None 
         self._vehicle_spawner = VehicleSpawner(self.client, self.world)
@@ -231,7 +232,8 @@ class World(object):
         s = {}
         routes = settings.get("Carla", "Routes", fallback=None)
         auto_record = settings.get("Carla", "AutoRecord", fallback=None)
-        self._num_vehicles = int(settings.get("Carla", "NumberOfVehicles", fallback=0))
+        self._num_vehicles_min = int(settings.get("Carla", "NumberOfVehiclesMin", fallback=0))
+        self._num_vehicles_max = int(settings.get("Carla", "NumberOfVehiclesMax", fallback=0))
         self._spawning_radius = float(settings.get("Carla", "SpawnRadius", fallback=0))
         self._auto_timeout = float(settings.get("Carla", "AutoTimeout", fallback=0))
         if routes: 
@@ -300,7 +302,7 @@ class World(object):
         # self.hud.notification(actor_type)      
 
         if self._num_vehicles is not None and self._spawning_radius is not None: 
-            self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles, self._spawning_radius)
+            self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
         #self.next_rain()
