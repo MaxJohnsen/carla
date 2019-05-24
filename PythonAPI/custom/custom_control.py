@@ -302,6 +302,8 @@ class World(object):
         if self._num_vehicles is not None and self._spawning_radius is not None: 
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles, self._spawning_radius)
 
+
+        #self.next_rain()
         self.hud._episode_start_time = self.hud.simulation_time
 
     def next_weather(self, reverse=False):
@@ -310,6 +312,25 @@ class World(object):
         preset = self._weather_presets[self._weather_index]
         self.hud.notification('Weather: %s' % preset[1])
         self.player.get_world().set_weather(preset[0])
+
+        self.history.update_weather_index(self._weather_index)
+
+    def next_rain(self, reverse=False):
+        if self._weather_index < 4 or self._weather_index > 8:
+            self._weather_index = 4
+        else: 
+            self._weather_index += 1 
+        preset = self._weather_presets[self._weather_index]
+        self.hud.notification('Weather: %s' % preset[1])
+        self.player.get_world().set_weather(preset[0])
+
+        self.history.update_weather_index(self._weather_index)
+
+    def reset_weahter(self): 
+        preset = self._weather_presets[0]
+        self.hud.notification('Weather: %s' % preset[1])
+        self.player.get_world().set_weather(preset[0])
+
 
     def next_spawn_point(self):
         self._spawn_point_start += 1
@@ -411,7 +432,6 @@ class KeyboardControl(object):
             self._steer_history.pop()
 
     def parse_events(self, client, world, clock):
-
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
@@ -495,7 +515,6 @@ class KeyboardControl(object):
                     if self._model_paths is not None and len(self._model_paths)>0: 
                         drive_model_parameters = self._parameter_paths.pop(0)
                         drive_model_path = self._model_paths.pop(0) 
-                        model = CNNKeras()
                         model.load_model(drive_model_path)
                         self._drive_model = model
                         world.restart()
@@ -1123,6 +1142,8 @@ class History:
         self.control_type = None
         self._latest_hlc = None
 
+        self._weather_index = 0
+
 
     def _initiate(self):
         if self._active:
@@ -1131,7 +1152,7 @@ class History:
         self._driving_log = pd.DataFrame(columns=[
             "ForwardCenter", "ForwardLeft", "ForwardRight", "LeftCenter",
             "RightCenter", "Location", "Velocity", "Controls", "ClientAutopilotControls","ControlType","TrafficLight",
-            "SpeedLimit", "HLC", "Environment"
+            "SpeedLimit", "HLC", "Environment", "WheaterId"
         ])
         self._timestamp = time.strftime("%Y-%m-%d_%H-%M-%S",
                                         time.localtime(time.time()))
@@ -1142,6 +1163,9 @@ class History:
         self._frame_number = 0
         self._latest_client_autopilot_control = None
         self._latest_hlc = RoadOption.LANEFOLLOW
+
+    def update_weather_index(self, weather_index): 
+        self._weather_index = weather_index
 
     def update_image(self, image, position, sensor_type):
         if image.raw_data:
@@ -1201,7 +1225,9 @@ class History:
                 red_light,
                 player.get_speed_limit() / 3.6, 
                 hlc.value, 
-                Enviornment.HIGHWAY.value
+                Enviornment.HIGHWAY.value,
+                self._weather_index
+
             ],
                       index=self._driving_log.columns),
             ignore_index=True)
@@ -1249,10 +1275,6 @@ def game_loop(args, settings):
         hud = HUD(args.width, args.height)
         history = History(args.output)
 
-        model = None
-        if args.model is not None:
-            model = CNNKeras()
-            model.load_model(args.model)
 
         world = World(
             client,
@@ -1262,6 +1284,7 @@ def game_loop(args, settings):
             args.filter, 
             settings)
         
+
         # Program can either be called with a folder of models to try, or one specific model file to test 
         if args.models is not None:
             model_paths, parameter_paths = get_best_models(Path(args.models)) 
@@ -1270,16 +1293,16 @@ def game_loop(args, settings):
 
             world.hud._drive_model_parameters = get_parameter_text(parameter_path)
             world.hud._drive_model_name = str(model_path).split('/')[-1]
-            model = CNNKeras() 
+            model = LSTMKeras(5,3) 
             model.load_model(model_path)
             controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths)        
 
         elif args.model is not None:
-            model = CNNKeras()
+            model = LSTMKeras(5,3) 
             model.load_model(args.model)
             controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)        
         else:
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)
+            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=None)
  
 
 
@@ -1297,6 +1320,7 @@ def game_loop(args, settings):
     finally:
 
         if world is not None:
+            world.reset_weahter()
             print("Destroying world")
             world.destroy()
 
