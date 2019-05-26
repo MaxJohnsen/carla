@@ -37,8 +37,11 @@ class VehicleSpawner(object):
     
     def spawn_nearby(self, hero_spawn_point_index, number_of_vehicles_min,number_of_vehicles_max, radius):
 
+       
         number_of_vehicles = random.randint(number_of_vehicles_min,number_of_vehicles_max)
+        print(number_of_vehicles)
         hero_spawn_point = self.spawn_points[hero_spawn_point_index]
+
         hero_x = hero_spawn_point.location.x
         hero_y = hero_spawn_point.location.y
 
@@ -48,14 +51,21 @@ class VehicleSpawner(object):
 
         valid_spawn_points = []
         for spawn_point in self.spawn_points:
-            x = spawn_point.location.x
-            y = spawn_point.location.y
-            yaw = spawn_point.rotation.yaw
-            angle_diff = hero_spawn_point.rotation.yaw - yaw 
-            angle_diff = abs((angle_diff + 180) % 360 - 180)
+            if spawn_point == hero_spawn_point: 
+                continue
 
-            if abs(hero_x-x)<= radius and abs(hero_y-y)<=radius and angle_diff < 50: 
+            if radius != 0:
+                x = spawn_point.location.x
+                y = spawn_point.location.y
+                yaw = spawn_point.rotation.yaw
+                angle_diff = hero_spawn_point.rotation.yaw - yaw 
+                angle_diff = abs((angle_diff + 180) % 360 - 180)
+                
+                if abs(hero_x-x)<= radius and abs(hero_y-y)<=radius and angle_diff < 50: 
+                    valid_spawn_points.append(spawn_point)
+            else: 
                 valid_spawn_points.append(spawn_point)
+
             
         number_of_spawn_points = len(valid_spawn_points)
 
