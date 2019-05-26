@@ -108,7 +108,7 @@ from agents.navigation.basic_agent import BasicAgent
 from agents.tools.enums import RoadOption, Enviornment, ControlType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
-from helpers import is_valid_lane_change, get_best_models, get_parameter_text
+from helpers import is_valid_lane_change, get_best_models, get_parameter_text, set_green_traffic_light
 
 import argparse
 import collections
@@ -301,11 +301,11 @@ class World(object):
         actor_type = get_actor_display_name(self.player)
         # self.hud.notification(actor_type)      
 
-        if self._num_vehicles is not None and self._spawning_radius is not None: 
+        if self._num_vehicles_max != 0 and self._spawning_radius is not None: 
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
-        #self.next_rain()
+        #self.next_weather()
         self.hud._episode_start_time = self.hud.simulation_time
 
     def next_weather(self, reverse=False):
@@ -433,6 +433,8 @@ class KeyboardControl(object):
         if len(self._steer_history) > self._history_size:
             self._steer_history.pop()
 
+        
+
     def parse_events(self, client, world, clock):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -536,10 +538,13 @@ class KeyboardControl(object):
                         world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANERIGHT)
                 elif event.key == K_KP5:
+                    world.hud.notification('Follow lane')
                     self._active_hlc = RoadOption.LANEFOLLOW                
                 elif event.key == K_KP7:
+                    world.hud.notification('Left lane change')
                     self._active_hlc = RoadOption.CHANGELANELEFT
                 elif event.key == K_KP9:
+                    world.hud.notification('Right lane change')
                     self._active_hlc = RoadOption.CHANGELANERIGHT
 
         world.history.control_type = self._control_type
@@ -562,6 +567,8 @@ class KeyboardControl(object):
         elif self._control_type == ControlType.DRIVE_MODEL:
             self._parse_drive_model_commands(world)
         elif self._control_type == ControlType.CLIENT_AP:
+            world.history.update_hlc(world._client_ap._local_planner._target_road_option)
+            print(world.history._latest_hlc)
             world._client_ap.set_target_speed(world.player.get_speed_limit()-10)
             self._parse_client_ap(world)
             # Change route if client AP has reached its destination
@@ -1198,6 +1205,7 @@ class History:
             client_ap_c = None
             hlc = self._latest_hlc
 
+        
         for name, image in self._latest_images.items():
             images.append((name + "_%08d.png" % self._frame_number, image))
 
