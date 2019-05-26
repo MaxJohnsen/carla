@@ -150,6 +150,8 @@ class LSTMKeras(ModelInterface):
 
             prediction = self._model.predict({
                 "image_center_input": imgs_center,
+                "image_left_input": imgs_left,
+                "image_right_input": imgs_right,
                 "info_input": infos,
                 "hlc_input": hlcs
             })
