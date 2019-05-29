@@ -30,16 +30,14 @@ class CNNKeras(ModelInterface):
         self.hlc_one_hot = { 1: [1,0,0,0,0,0], 2:[0,1,0,0,0,0], 3:[0,0,1,0,0,0], 4:[0,0,0,1,0,0], 5:[0,0,0,0,1,0], 6:[0,0,0,0,0,1]}
 
     
-    def load_model(self, path):
+    def load_model(self, path, steer_scale):
         self._model = tf.keras.models.load_model(path, compile=False)
-        match = re.search("scale(\d+\.*\d*)", str(path))
-        if match: 
-            self._steer_scale = float(match.group(1))
+        self._steer_scale = steer_scale
 
-        print("CNN drive model loaded with steer scale ", self._steer_scale)
+        print("CNN drive model loaded with steer scale ", steer_scale)
 
 
-    def get_prediction(self, images, info):
+    def get_prediction(self, images, info, steer_scale):
         if self._model is None:
             return False
 
@@ -73,7 +71,7 @@ class CNNKeras(ModelInterface):
 
 
 class LSTMKeras(ModelInterface):
-    def __init__(self, seq_length, sampling_interval, capture_rate=3, late_hlc=False):
+    def __init__(self, capture_rate=3, late_hlc=False):
         self._model = None
         
         config = tf.ConfigProto()
@@ -90,8 +88,8 @@ class LSTMKeras(ModelInterface):
         self._info_history = [] 
         self._hlc_history = []
 
-        self._seq_length = seq_length
-        self._sampling_interval = sampling_interval + capture_rate - 1
+        self._seq_length = None 
+        self._sampling_interval = None 
         self.hlc_one_hot = { 1: [1,0,0,0,0,0], 2:[0,1,0,0,0,0], 3:[0,0,1,0,0,0], 4:[0,0,0,1,0,0], 5:[0,0,0,0,1,0], 6:[0,0,0,0,0,1]}
 
     def _init_history(self):
@@ -101,11 +99,12 @@ class LSTMKeras(ModelInterface):
         self._info_history = [] 
         self._hlc_history = []
     
-    def load_model(self, path):
+    def load_model(self, path, steer_scale, seq_length, sampling_interval):
         self._model = tf.keras.models.load_model(path, compile=False)
-        match = re.search("scale(\d+\.*\d*)", str(path))
-        if match: 
-            self._steer_scale = float(match.group(1))
+
+        self._steer_scale = steer_scale
+        self._seq_length = seq_length
+        self._sampling_interval = sampling_interval
         self._init_history()
 
         print("LSTM drive model loaded with steer scale ", self._steer_scale)
