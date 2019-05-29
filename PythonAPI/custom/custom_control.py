@@ -108,7 +108,7 @@ from agents.navigation.basic_agent import BasicAgent
 from agents.tools.enums import RoadOption, Enviornment, ControlType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
-from helpers import is_valid_lane_change, get_best_models, get_parameter_text, set_green_traffic_light
+from helpers import is_valid_lane_change, get_best_models, get_parameter_text, set_green_traffic_light, get_lstm_config
 
 import argparse
 import collections
@@ -198,7 +198,7 @@ def get_actor_display_name(actor, truncate=250):
 
 
 class World(object):
-    def __init__(self, client, carla_world, hud, history, actor_filter, settings):
+    def __init__(self, client, carla_world, hud, history, actor_filter, settings, hq_recording):
         self.client = client
         self.world = carla_world
         self.map = self.world.get_map()
@@ -221,6 +221,7 @@ class World(object):
         self._auto_timeout = None 
         self._vehicle_spawner = VehicleSpawner(self.client, self.world)
         self._initialize_settings(settings)
+        self._hq_recording = hq_recording
         self.restart()
         self.world.on_tick(hud.on_world_tick)
         self._current_traffic_light = 0
@@ -290,7 +291,7 @@ class World(object):
         
         # Set up the sensors.
         self.camera_manager = CameraManager(self.player, self._client_ap, self.hud,
-                                            self.history)
+                                            self.history, self._hq_recording)
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
@@ -375,10 +376,11 @@ class World(object):
 
 
 class KeyboardControl(object):
-    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None, model_paths=None, parameter_paths=None):
+    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None, model_paths=None, parameter_paths=None, config_paths=None):
         self._drive_model = drive_model
         self._model_paths = model_paths
         self._parameter_paths = parameter_paths
+        self._config_paths = config_paths
 
         self._steering_wheel_enabled = use_steering_wheel
         self._control_type = None 
@@ -519,7 +521,19 @@ class KeyboardControl(object):
                     if self._model_paths is not None and len(self._model_paths)>0: 
                         drive_model_parameters = self._parameter_paths.pop(0)
                         drive_model_path = self._model_paths.pop(0) 
-                        model.load_model(drive_model_path)
+                        config_path = self._config_paths.pop(0)
+
+                        steer_scale, seq_length, sampling_interval, model_type = get_lstm_config(config_path)
+                        if model_type == "lstm":
+                            model = LSTMKeras()
+                            model.load_model(drive_model_path, steer_scale, seq_length, sampling_interval)
+                        elif model_type == "cnn": 
+                            model = CNNKeras()
+                            model.load_model(drive_model_path, steer_scale)
+                        else: 
+                            print("ERROR: do not recognize model type")
+
+
                         self._drive_model = model
                         world.restart()
 
@@ -669,7 +683,7 @@ class KeyboardControl(object):
         
         self._control.throttle = max(min(float(throttle), 1),0)
         
-        self._control.brake = 1 if float(brake) > 0.5 else 0
+        self._control.brake = 1 if float(brake) > 0.3 else 0
 
     def _parse_vehicle_keys(self, world, keys, milliseconds):
         self._control.throttle = 1.0 if keys[K_UP] or keys[K_w] else 0.0
@@ -952,7 +966,7 @@ class HelpText(object):
 
 
 class CameraManager(object):
-    def __init__(self, parent_actor, client_ap, hud, history):
+    def __init__(self, parent_actor, client_ap, hud, history, hq_recording):
         self.sensor = None
         self._surface = None
         self._parent = parent_actor
@@ -960,8 +974,9 @@ class CameraManager(object):
         self._hud = hud
         self._history = history
         self._recording = False 
-        self._capture_rate = 3
+        self._capture_rate = 1
         self._frame_number = 1
+        self._hq_recording = hq_recording
         self._camera_transforms = [
             carla.Transform(
                 carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
@@ -1050,6 +1065,21 @@ class CameraManager(object):
         sensor.listen(lambda image: self._history.update_image(
             image, "right_center", "rgb"))
         self._recording_sensors.append(sensor)
+
+        if self._hq_recording:
+            sensor_bp = self._parent.get_world().get_blueprint_library().find(
+                'sensor.camera.rgb')
+            sensor_bp.set_attribute('image_size_x', "1920")
+            sensor_bp.set_attribute('image_size_y', "1080")
+
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=-0.5, z=2.0)),
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image_hq(
+                image, "hq_record", "rgb"))
+            self._recording_sensors.append(sensor)
+
 
     def _destroy_sensors(self):
         for sensor in self._recording_sensors:
@@ -1181,6 +1211,11 @@ class History:
             img = np.reshape(np.array(image.raw_data), (160, 350, 4))[:, :, :3]
             self._latest_images[position + "_" + sensor_type] = img
 
+    def update_image_hq(self, image, position, sensor_type):
+        if image.raw_data:
+            img = np.reshape(np.array(image.raw_data), (1080, 1920, 4))[:, :, :3]
+            self._latest_images[position + "_" + sensor_type] = img
+
     def update_client_autopilot_control(self, control): 
         self._latest_client_autopilot_control = control
 
@@ -1214,6 +1249,8 @@ class History:
         output_path = Path(self._output_folder + '/' + self._timestamp)
         image_path = output_path / "imgs"
 
+
+
         red_light = 0 if player.get_traffic_light_state(
         ) == carla.TrafficLightState.Red else 1
 
@@ -1243,6 +1280,7 @@ class History:
             ignore_index=True)
 
     def save_to_disk(self):
+
         output_path = Path(self._output_folder + '/' + self._timestamp)
         image_path = output_path / "imgs"
         image_path.mkdir(parents=True, exist_ok=True)
@@ -1285,32 +1323,41 @@ def game_loop(args, settings):
         hud = HUD(args.width, args.height)
         history = History(args.output)
 
-
         world = World(
             client,
             sim_world, 
             hud, 
             history, 
             args.filter, 
-            settings)
+            settings,
+            args.hq_recording
+            )
         
-
+        print("game loop")
         # Program can either be called with a folder of models to try, or one specific model file to test 
         if args.models is not None:
-            model_paths, parameter_paths = get_best_models(Path(args.models)) 
+            print("Model")
+            model_paths, parameter_paths, config_paths = get_best_models(Path(args.models)) 
             model_path = model_paths.pop(0)
             parameter_path = parameter_paths.pop(0)
+            config_path = config_paths.pop(0)
+
+            steer_scale, seq_length, sampling_interval, model_type = get_lstm_config(config_path)
 
             world.hud._drive_model_parameters = get_parameter_text(parameter_path)
             world.hud._drive_model_name = str(model_path).split('/')[-1]
-            model = LSTMKeras(5,3) 
-            model.load_model(model_path)
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths)        
+            if model_type == "lstm":
+                model = LSTMKeras() 
+                model.load_model(model_path, steer_scale, seq_length, sampling_interval)
+            elif model_type == "cnn": 
+                model = CNNKeras() 
+                model.load_model(model_path, steer_scale)
+            else: 
+                print("ERROR: do not recognize the model type")
 
-        elif args.model is not None:
-            model = LSTMKeras(5,3) 
-            model.load_model(args.model)
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)        
+            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths, config_paths=config_paths)        
+
+            
         else:
             controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=None)
  
@@ -1384,12 +1431,6 @@ def main():
         help='output-folder for recordings')
     argparser.add_argument(
         '-m',
-        '--model',
-        dest='model',
-        default=None,
-        help='model file for autonomouse driving')
-    argparser.add_argument(
-        '-ms',
         '--models',
         dest='models',
         default=None,
@@ -1400,6 +1441,13 @@ def main():
         action='store_true',
         default=False,
         help='use steering wheel to control vehicle')
+    argparser.add_argument(
+        '-hqr',
+        dest='hq_recording',
+        action='store_true',
+        default=False,
+        help='record high quality images')
+
 
     args = argparser.parse_args()
     args.width, args.height = [int(x) for x in args.res.split('x')]
