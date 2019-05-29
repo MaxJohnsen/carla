@@ -2,9 +2,22 @@ from glob import glob
 from pathlib import Path
 import re 
 import carla
+import configparser
 
 from agents.tools.enums import RoadOption
 from agents.tools.misc import distance_vehicle
+
+
+def get_lstm_config(path): 
+    config = configparser.ConfigParser()
+    config.read(path)
+    steer_scale = float(config.get("ModelConfig", "scale", fallback=1.0))
+    seq_length = int(config.get("ModelConfig","sequence_length",fallback=None))
+    sampling_interval = int(config.get("ModelConfig","sampling_interval", fallback=None))
+    model_type = config.get("ModelConfig","model", fallback=None)
+
+    return steer_scale, seq_length, sampling_interval, model_type
+
 
 def set_green_traffic_light(player):
 
@@ -24,6 +37,7 @@ def get_best_models(models_path):
 
     best_model_paths = []
     model_parameter_paths = []
+    config_paths = []
 
     # For each model 
     for model_path in sorted(glob(str(models_path / "*"))):
@@ -47,6 +61,7 @@ def get_best_models(models_path):
 
         # Add best model to list 
         best_model_paths.append(min_val_loss_model_path)
+        config_paths.append(model_path+"/config.ini")
 
         # Get txt-file of model 
         txt_paths = glob(str(Path(model_path) / "*parameters.txt"))
@@ -57,16 +72,18 @@ def get_best_models(models_path):
         else: 
             model_parameter_paths.append(Path(txt_paths[0]))
 
-    return best_model_paths, model_parameter_paths
+    return best_model_paths, model_parameter_paths, config_paths
         
 
 def get_parameter_text(path):
     f = open(str(path), "r")
     params = []
     for line in f:
+        if '___' in line: 
+            break
         if 'dataset' not in line and 'epochs' not in line and "batch" not in line:  
             params.append(line.replace("\n", ""))
-
+        
     return params
     
 
