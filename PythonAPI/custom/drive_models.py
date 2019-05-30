@@ -7,6 +7,7 @@ import tensorflow as tf
 from tensorflow.keras.backend import set_session
 import tensorflow.keras.losses
 import re
+from scipy.optimize import curve_fit
 
 class ModelInterface(ABC):
     @abstractmethod
@@ -17,6 +18,9 @@ class ModelInterface(ABC):
     def get_prediction(self, images, info):
         pass
 
+
+def encoder(x, angle):
+    return np.sin(((2*np.pi*(x-1))/(9))-((angle*np.pi)/(2*1*70)))
 
 class CNNKeras(ModelInterface):
     def __init__(self):
@@ -58,19 +62,18 @@ class CNNKeras(ModelInterface):
         hlc_input = self.hlc_one_hot[info["hlc"].value]
 
         prediction = self._model.predict({
-            "image_center_input": np.array([img_center]),
-            "image_left_input": np.array([img_left]),
-            "image_right_input": np.array([img_right]),
+            "forward_image_input": np.array([img_center]),
             "info_input": np.array([info_input]),
-            "hlc_input": np.array([hlc_input])
         })
+        steer, throttle, brake = prediction[0][0], prediction[1][0], prediction[2][0]
+        #steer = prediction[0]
+        steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
 
-        prediction = prediction[0]
-        throttle = prediction[0]
-        steer = prediction[1]/self._steer_scale
-        brake = prediction[2]
-        return (steer, throttle, brake)
+        steer_angle = steer_curve_parameters[0]
 
+        step_brake = 1 if brake > 0.5 else 0
+
+        return (steer_angle, throttle, step_brake)  
 
 class LSTMKeras(ModelInterface):
     def __init__(self, seq_length, sampling_interval, capture_rate=3, late_hlc=False):
@@ -132,7 +135,7 @@ class LSTMKeras(ModelInterface):
         self._img_right_history.append(np.array(img_right))
         self._info_history.append(np.array(info_input))
         self._hlc_history.append(np.array(hlc_input))
-
+        print(hlc_input)
         if len(self._img_center_history) > req:
             self._img_center_history.pop(0)
             self._img_left_history.pop(0)
@@ -150,15 +153,24 @@ class LSTMKeras(ModelInterface):
 
             prediction = self._model.predict({
                 "image_center_input": imgs_center,
+                "image_left_input": imgs_left,
+                "image_right_input": imgs_right,
                 "info_input": infos,
                 "hlc_input": hlcs
             })
+
+            """if info["hlc"].value == 4:
+                prediction = prediction[0]
+            elif info["hlc"].value == 5:
+                prediction = prediction[1]
+            elif info["hlc"].value == 6:
+                prediction = prediction[2]"""
             prediction = prediction[0]
             throttle = prediction[0]
             steer = prediction[1] / self._steer_scale
             brake = prediction[2]
 
-            print(brake)
+            # print(brake)
 
             return (steer, throttle, brake)
         return (0, 0, 0)
