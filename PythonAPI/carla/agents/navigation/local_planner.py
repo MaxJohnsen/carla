@@ -27,7 +27,7 @@ class LocalPlanner(object):
 
     # minimum distance to target waypoint as a percentage (e.g. within 90% of
     # total distance)
-    MIN_DISTANCE_PERCENTAGE = 0.9
+    MIN_DISTANCE_PERCENTAGE = 1.0
 
     def __init__(self, vehicle, opt_dict=None):
         """
@@ -134,6 +134,7 @@ class LocalPlanner(object):
         :return:
         """
         self._target_speed = speed
+        self._dt = 1/speed
 
     def _compute_next_waypoints(self, k=1):
         """
@@ -216,7 +217,7 @@ class LocalPlanner(object):
 
         for i, (waypoint, _) in enumerate(self._waypoint_buffer):
             if distance_vehicle(
-                    waypoint, vehicle_transform) < self._min_distance:
+                    waypoint, vehicle_transform) <= self._min_distance:
                 max_index = i
         if max_index >= 0:
             for i in range(max_index + 1):
