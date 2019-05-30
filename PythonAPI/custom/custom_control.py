@@ -108,7 +108,7 @@ from agents.navigation.basic_agent import BasicAgent
 from agents.tools.enums import RoadOption, Enviornment, ControlType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
-from helpers import is_valid_lane_change, get_best_models, get_parameter_text
+from helpers import is_valid_lane_change, get_best_models, get_parameter_text, set_green_traffic_light
 
 import argparse
 import collections
@@ -301,7 +301,7 @@ class World(object):
         actor_type = get_actor_display_name(self.player)
         # self.hud.notification(actor_type)      
 
-        if self._num_vehicles is not None and self._spawning_radius is not None: 
+        if self._num_vehicles_max != 0 and self._spawning_radius is not None: 
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
@@ -433,6 +433,8 @@ class KeyboardControl(object):
         if len(self._steer_history) > self._history_size:
             self._steer_history.pop()
 
+        
+
     def parse_events(self, client, world, clock):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -535,12 +537,17 @@ class KeyboardControl(object):
                     if self._control_type == ControlType.DRIVE_MODEL:
                         world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANERIGHT)
-                elif event.key == K_KP5:
-                    self._active_hlc = RoadOption.LANEFOLLOW                
+                elif event.key == K_KP8:
+                    self._active_hlc = RoadOption.LANEFOLLOW
+                    world.hud.notification('LANE FOLLOW')
+                    world.history.update_hlc(RoadOption.LANEFOLLOW)
                 elif event.key == K_KP7:
                     self._active_hlc = RoadOption.CHANGELANELEFT
+                    world.history.update_hlc(RoadOption.CHANGELANELEFT)
+                    world.hud.notification('CHANGE LANE LEFT')
                 elif event.key == K_KP9:
-                    self._active_hlc = RoadOption.CHANGELANERIGHT
+                    world.history.update_hlc(RoadOption.CHANGELANERIGHT)
+                    world.hud.notification('CHANGE LANE RIGHT')
 
         world.history.control_type = self._control_type
 
@@ -562,6 +569,8 @@ class KeyboardControl(object):
         elif self._control_type == ControlType.DRIVE_MODEL:
             self._parse_drive_model_commands(world)
         elif self._control_type == ControlType.CLIENT_AP:
+            world.history.update_hlc(world._client_ap._local_planner._target_road_option)
+            print(world.history._latest_hlc)
             world._client_ap.set_target_speed(world.player.get_speed_limit()-10)
             self._parse_client_ap(world)
             # Change route if client AP has reached its destination
@@ -580,7 +589,7 @@ class KeyboardControl(object):
                 direction = 1 if option == RoadOption.CHANGELANELEFT else -1
                 current_lane = world.map.get_waypoint(world.player.get_location()).lane_id
                 if abs(current_lane) == abs(original_lane):
-                    self._control.steer =  original_steer - 0.015*direction
+                    self._control.steer =  original_steer - 0.005*direction
                 else:
                     self._lane_change_activated = None
                     self._lane_change_started = False
@@ -647,7 +656,7 @@ class KeyboardControl(object):
         info["speed"] = speed
         info["traffic_light"] = red_light
         info["speed_limit"] = player.get_speed_limit() / 3.6
-        info["hlc"] = self._active_hlc
+        info["hlc"] = world.history._latest_hlc
         info["environment"] = 0
 
         steer = 0
@@ -1198,6 +1207,7 @@ class History:
             client_ap_c = None
             hlc = self._latest_hlc
 
+        
         for name, image in self._latest_images.items():
             images.append((name + "_%08d.png" % self._frame_number, image))
 
@@ -1286,6 +1296,8 @@ def game_loop(args, settings):
             args.filter, 
             settings)
         
+        if args.models is not None or args.model is not None:
+            model = CNNKeras()
 
         # Program can either be called with a folder of models to try, or one specific model file to test 
         if args.models is not None:
@@ -1295,12 +1307,10 @@ def game_loop(args, settings):
 
             world.hud._drive_model_parameters = get_parameter_text(parameter_path)
             world.hud._drive_model_name = str(model_path).split('/')[-1]
-            model = LSTMKeras(5,3) 
             model.load_model(model_path)
             controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths)        
 
         elif args.model is not None:
-            model = LSTMKeras(5,3) 
             model.load_model(args.model)
             controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model)        
         else:
