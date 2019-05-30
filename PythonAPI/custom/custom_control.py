@@ -105,7 +105,7 @@ import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
 from agents.navigation.basic_agent import BasicAgent
-from agents.tools.enums import RoadOption, Enviornment, ControlType
+from agents.tools.enums import RoadOption, Environment, ControlType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
 from helpers import is_valid_lane_change, get_best_models, get_parameter_text, set_green_traffic_light, get_lstm_config
@@ -208,7 +208,7 @@ class World(object):
         self.camera_manager = None
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
-        self._spawn_point_start = 51
+        self._spawn_point_start = 132
         self._spawn_point_destination = 7
         self._actor_filter = actor_filter
         self._routes = None 
@@ -306,7 +306,7 @@ class World(object):
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
-        #self.next_weather()
+        self.next_weather()
         self.hud._episode_start_time = self.hud.simulation_time
 
     def next_weather(self, reverse=False):
@@ -376,7 +376,7 @@ class World(object):
 
 
 class KeyboardControl(object):
-    def __init__(self, world, settings, use_steering_wheel=False, drive_model=None, model_paths=None, parameter_paths=None, config_paths=None):
+    def __init__(self, world, settings, environment, use_steering_wheel=False, drive_model=None, model_paths=None, parameter_paths=None, config_paths=None):
         self._drive_model = drive_model
         self._model_paths = model_paths
         self._parameter_paths = parameter_paths
@@ -398,6 +398,7 @@ class KeyboardControl(object):
         self._control = carla.VehicleControl()
         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
         self._steer_cache = 0.0
+        self._environment = environment
 
          # initialize steering wheel
         if self._steering_wheel_enabled:
@@ -582,13 +583,13 @@ class KeyboardControl(object):
             self._parse_drive_model_commands(world)
         elif self._control_type == ControlType.CLIENT_AP:
             world.history.update_hlc(world._client_ap._local_planner._target_road_option)
-            print(world.history._latest_hlc)
+            #print(world.history._latest_hlc)
             world._client_ap.set_target_speed(world.player.get_speed_limit()-10)
             self._parse_client_ap(world)
             # Change route if client AP has reached its destination
             position = world.player.get_transform().location
             destination  = world.map.get_spawn_points()[world._spawn_point_destination].location
-            if abs(position.x-destination.x) < 3 and abs(position.y-destination.y)<3:
+            if abs(position.x-destination.x) < 20 and abs(position.y-destination.y)<20:
                 world.hud.notification("Route Complete")
                 world.restart()
                 if world._quit_next:
@@ -644,7 +645,7 @@ class KeyboardControl(object):
         self._control.throttle = throttleCmd
         
 
-    def _parse_drive_model_commands(self, world,):
+    def _parse_drive_model_commands(self, world):
         images = {}
         info = {}
 
@@ -669,7 +670,7 @@ class KeyboardControl(object):
         info["traffic_light"] = red_light
         info["speed_limit"] = player.get_speed_limit() / 3.6
         info["hlc"] = self._active_hlc
-        info["environment"] = 0
+        info["environment"] = self._environment.value
 
         steer = 0
         throttle = 0
@@ -974,7 +975,7 @@ class CameraManager(object):
         self._hud = hud
         self._history = history
         self._recording = False 
-        self._capture_rate = 1
+        self._capture_rate = 1 if hq_recording else 3
         self._frame_number = 1
         self._hq_recording = hq_recording
         self._camera_transforms = [
@@ -1168,7 +1169,7 @@ class CameraManager(object):
 
 
 class History:
-    def __init__(self, output_folder):
+    def __init__(self, output_folder, environment):
         self._latest_images = {}
         self._image_history = []
         self._measurements_history = []
@@ -1180,6 +1181,7 @@ class History:
         self._latest_client_autopilot_control = None
         self.control_type = None
         self._latest_hlc = None
+        self._environment = environment
 
         self._weather_index = 0
 
@@ -1202,7 +1204,7 @@ class History:
         self._frame_number = 0
         self._latest_client_autopilot_control = None
         self._latest_hlc = RoadOption.LANEFOLLOW
-
+        
     def update_weather_index(self, weather_index): 
         self._weather_index = weather_index
 
@@ -1236,6 +1238,7 @@ class History:
             client_ap_c = self._latest_client_autopilot_control
 
             hlc = client_ap._local_planner._target_road_option
+
         else:
             client_ap_c = None
             hlc = self._latest_hlc
@@ -1257,6 +1260,8 @@ class History:
         speed = math.sqrt(v.x**2 + v.y**2 + v.z**2)
         if math.isnan(c.steer) or (self.control_type == ControlType.CLIENT_AP and math.isnan(client_ap_c.steer)):
             return 
+                
+            
         self._driving_log = self._driving_log.append(
             pd.Series([
                 "imgs/forward_center_rgb_%08d.png" % self._frame_number,
@@ -1272,7 +1277,7 @@ class History:
                 red_light,
                 player.get_speed_limit() / 3.6, 
                 hlc.value, 
-                Enviornment.HIGHWAY.value,
+                self._environment.value,
                 self._weather_index
 
             ],
@@ -1311,6 +1316,12 @@ def game_loop(args, settings):
     try:
         client = carla.Client(args.host, args.port)
         sim_world = client.get_world()
+        carla_map = sim_world.get_map()
+        environment = Environment.VOID
+        if carla_map.name == "Town01": 
+            environment = Environment.RURAL 
+        elif carla_map.name == "Town04": 
+            environment = Environment.HIGHWAY
         #world_settings = sim_world.get_settings()
         #world_settings.synchronous_mode = True
         #sim_world.apply_settings(world_settings)
@@ -1321,7 +1332,7 @@ def game_loop(args, settings):
                                           pygame.HWSURFACE | pygame.DOUBLEBUF)
 
         hud = HUD(args.width, args.height)
-        history = History(args.output)
+        history = History(args.output, environment)
 
         world = World(
             client,
@@ -1355,11 +1366,11 @@ def game_loop(args, settings):
             else: 
                 print("ERROR: do not recognize the model type")
 
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths, config_paths=config_paths)        
+            controller = KeyboardControl(world, settings, environment, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths, config_paths=config_paths)        
 
             
         else:
-            controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, drive_model=None)
+            controller = KeyboardControl(world, settings, environment, use_steering_wheel=args.joystick, drive_model=None)
  
 
 
