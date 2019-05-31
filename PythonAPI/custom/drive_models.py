@@ -20,7 +20,7 @@ class ModelInterface(ABC):
 
 
 def encoder(x, angle):
-    return np.sin(((2*np.pi*(x-1))/(9))-((angle*np.pi)/(2*1*70)))
+    return np.sin(((2*np.pi*(x-1))/(9))-((angle*np.pi)/(2*1)))
 
 class CNNKeras(ModelInterface):
     def __init__(self):
@@ -106,18 +106,11 @@ class LSTMKeras(ModelInterface):
     
     def load_model(self, path):
         self._model = tf.keras.models.load_model(path, compile=False)
-        match = re.search("scale(\d+\.*\d*)", str(path))
-        if match: 
-            self._steer_scale = float(match.group(1))
-        self._init_history()
-
-        print("LSTM drive model loaded with steer scale ", self._steer_scale)
 
 
     def get_prediction(self, images, info):
         if self._model is None:
             return False
-
         req = (self._seq_length - 1) * (self._sampling_interval + 1) + 1
 
         img_center = cv2.cvtColor(images["forward_center_rgb"], cv2.COLOR_BGR2LAB)
@@ -152,11 +145,8 @@ class LSTMKeras(ModelInterface):
             hlcs = np.array([self._hlc_history[0::self._sampling_interval + 1]])
 
             prediction = self._model.predict({
-                "image_center_input": imgs_center,
-                "image_left_input": imgs_left,
-                "image_right_input": imgs_right,
+                "forward_image_input": imgs_center,
                 "info_input": infos,
-                "hlc_input": hlcs
             })
 
             """if info["hlc"].value == 4:
@@ -165,12 +155,16 @@ class LSTMKeras(ModelInterface):
                 prediction = prediction[1]
             elif info["hlc"].value == 6:
                 prediction = prediction[2]"""
-            prediction = prediction[0]
-            throttle = prediction[0]
-            steer = prediction[1] / self._steer_scale
-            brake = prediction[2]
+
 
             # print(brake)
+            steer, throttle, brake = prediction[0][0], prediction[1][0], prediction[2][0]
+            #steer = prediction[0]
+            steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
 
-            return (steer, throttle, brake)
+            steer_angle = steer_curve_parameters[0]
+
+            step_brake = 1 if brake > 0.5 else 0
+
+            return (steer_angle, throttle, step_brake)
         return (0, 0, 0)
