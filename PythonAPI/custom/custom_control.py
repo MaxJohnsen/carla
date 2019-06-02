@@ -436,6 +436,7 @@ class KeyboardControl(object):
         
 
     def parse_events(self, client, world, clock):
+        set_green_traffic_light(world.player)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
@@ -538,9 +539,24 @@ class KeyboardControl(object):
                         world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANERIGHT)
                 elif event.key == K_KP8:
+                    self._active_hlc = RoadOption.STRAIGHT
+                    world.hud.notification('STRAIGHT')
+                    world.history.update_hlc(RoadOption.STRAIGHT)
+
+                elif event.key == K_KP4:
+                    self._active_hlc = RoadOption.LEFT
+                    world.hud.notification('LEFT')
+                    world.history.update_hlc(RoadOption.LEFT)
+
+                elif event.key == K_KP5:
                     self._active_hlc = RoadOption.LANEFOLLOW
                     world.hud.notification('LANE FOLLOW')
                     world.history.update_hlc(RoadOption.LANEFOLLOW)
+
+                elif event.key == K_KP6:
+                    self._active_hlc = RoadOption.RIGHT
+                    world.hud.notification('RIGHT')
+                    world.history.update_hlc(RoadOption.RIGHT)
                 elif event.key == K_KP7:
                     self._active_hlc = RoadOption.CHANGELANELEFT
                     world.history.update_hlc(RoadOption.CHANGELANELEFT)
@@ -1297,7 +1313,8 @@ def game_loop(args, settings):
             settings)
         
         if args.models is not None or args.model is not None:
-            model = CNNKeras()
+            model = LSTMKeras(10,2)
+            #model = CNNKeras()
 
         # Program can either be called with a folder of models to try, or one specific model file to test 
         if args.models is not None:
@@ -1332,7 +1349,7 @@ def game_loop(args, settings):
     finally:
 
         if world is not None:
-            world.reset_weahter()
+            #fworld.reset_weahter()
             print("Destroying world")
             world.destroy()
 

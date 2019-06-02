@@ -64,12 +64,14 @@ class CNNKeras(ModelInterface):
         prediction = self._model.predict({
             "forward_image_input": np.array([img_center]),
             "info_input": np.array([info_input]),
+            "hlc_input": np.array([hlc_input])
         })
         steer, throttle, brake = prediction[0][0], prediction[1][0], prediction[2][0]
         #steer = prediction[0]
         steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
 
         steer_angle = steer_curve_parameters[0]
+        print(brake)
 
         step_brake = 1 if brake > 0.5 else 0
 
@@ -128,7 +130,6 @@ class LSTMKeras(ModelInterface):
         self._img_right_history.append(np.array(img_right))
         self._info_history.append(np.array(info_input))
         self._hlc_history.append(np.array(hlc_input))
-        print(hlc_input)
         if len(self._img_center_history) > req:
             self._img_center_history.pop(0)
             self._img_left_history.pop(0)
@@ -147,6 +148,7 @@ class LSTMKeras(ModelInterface):
             prediction = self._model.predict({
                 "forward_image_input": imgs_center,
                 "info_input": infos,
+                "hlc_input": hlcs
             })
 
             """if info["hlc"].value == 4:
@@ -164,7 +166,9 @@ class LSTMKeras(ModelInterface):
 
             steer_angle = steer_curve_parameters[0]
 
-            step_brake = 1 if brake > 0.5 else 0
+            print(brake)
+
+            step_brake = 1 if brake > 0.3 else 0
 
             return (steer_angle, throttle, step_brake)
         return (0, 0, 0)
