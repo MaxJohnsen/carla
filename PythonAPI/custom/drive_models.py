@@ -125,4 +125,4 @@ class LSTMKeras(ModelInterface):
             print(brake)
 
             return (steer_angle, throttle, step_brake)
-        return (0, 0, 0)
+        return (0, 1.0, 0)
