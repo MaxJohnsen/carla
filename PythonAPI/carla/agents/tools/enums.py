@@ -21,6 +21,7 @@ class ControlType(Enum):
 class Enviornment(Enum):
     VOID = -1
     HIGHWAY = 0
+    RURAL = 1 
 
     
 class NoiseMode(Enum):

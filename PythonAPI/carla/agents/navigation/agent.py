@@ -59,6 +59,7 @@ class Agent(object):
         return control
 
     def _is_light_red_custom(self): 
+        # TODO: need to check decreasing distance?
         
         traffic_light_state = self._vehicle.get_traffic_light_state()
         if traffic_light_state == carla.TrafficLightState.Red:

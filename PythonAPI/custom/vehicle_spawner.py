@@ -11,7 +11,7 @@
 import glob
 import os
 import sys
-
+import math
 try:
     sys.path.append(glob.glob('../carla/dist/carla-*%d.%d-%s.egg' % (
         sys.version_info.major,
@@ -51,9 +51,14 @@ class VehicleSpawner(object):
 
         valid_spawn_points = []
         for spawn_point in self.spawn_points:
-            if spawn_point == hero_spawn_point: 
+            # Distance between spaw points 
+            loc = hero_spawn_point.location
+            dx = spawn_point.location.x - loc.x
+            dy = spawn_point.location.y - loc.y
+            distance = math.sqrt(dx * dx + dy * dy)
+            min_distance = 10
+            if spawn_point == hero_spawn_point or distance < min_distance: 
                 continue
-
             if radius != 0:
                 x = spawn_point.location.x
                 y = spawn_point.location.y

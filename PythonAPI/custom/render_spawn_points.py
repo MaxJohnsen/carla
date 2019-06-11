@@ -587,7 +587,6 @@ class MapImage(object):
             spawn_points = carla_map.get_spawn_points()
             font_size = world_to_pixel_width(1)
             font = pygame.font.SysFont('Arial', font_size, True)
-            print(spawn_points)
             for i in range(len(spawn_points)):
                 sp = spawn_points[i]
 
