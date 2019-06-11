@@ -18,7 +18,7 @@ class ControlType(Enum):
     SERVER_AP = 2
     DRIVE_MODEL = 3
 
-class Enviornment(Enum):
+class Environment(Enum):
     VOID = -1
     HIGHWAY = 0
     RURAL = 1 

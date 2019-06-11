@@ -13,7 +13,7 @@ The agent also responds to traffic lights. """
 from enum import Enum
 
 import carla
-from agents.tools.misc import is_within_distance_ahead, compute_magnitude_angle
+from agents.tools.misc import is_within_distance_ahead, compute_magnitude_angle, get_speed
 
 
 class AgentState(Enum):
@@ -36,7 +36,7 @@ class Agent(object):
         :param vehicle: actor to apply to local planner logic onto
         """
         self._vehicle = vehicle
-        self._proximity_threshold = 10.0  # meters
+        self._proximity_threshold = 15.0  # meters
         self._local_planner = None
         self._world = self._vehicle.get_world()
         self._map = self._vehicle.get_world().get_map()
@@ -104,6 +104,7 @@ class Agent(object):
                 continue
 
             loc = traffic_light.get_location()
+        
             if is_within_distance_ahead(loc, ego_vehicle_location,
                                         self._vehicle.get_transform().rotation.yaw,
                                         self._proximity_threshold):
@@ -193,10 +194,12 @@ class Agent(object):
                 continue
 
             loc = target_vehicle.get_location()
+            proximity_threshold = max(self._proximity_threshold, get_speed(self._vehicle)/2.0)
             if is_within_distance_ahead(loc, ego_vehicle_location,
                                         self._vehicle.get_transform().rotation.yaw,
-                                        self._proximity_threshold):
-                return (True, target_vehicle)
+                                        proximity_threshold):
+                if get_speed(self._vehicle)+1> get_speed(target_vehicle): 
+                    return (True, target_vehicle)
 
         return (False, None)
 

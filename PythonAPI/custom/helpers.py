@@ -69,6 +69,8 @@ def get_parameter_text(path):
     f = open(str(path), "r")
     params = []
     for line in f:
+        if '___' in line: 
+            break
         if 'dataset' not in line and 'epochs' not in line and "batch" not in line:  
             params.append(line.replace("\n", ""))
     return params

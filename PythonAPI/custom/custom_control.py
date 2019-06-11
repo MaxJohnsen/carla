@@ -105,10 +105,10 @@ import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
 from agents.navigation.basic_agent import BasicAgent
-from agents.tools.enums import RoadOption, Enviornment, ControlType
+from agents.tools.enums import RoadOption, Environment, ControlType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
-from helpers import is_valid_lane_change, get_models, get_parameter_text, set_green_traffic_light
+from helpers import is_valid_lane_change, get_parameter_text, set_green_traffic_light, get_models
 
 import argparse
 import collections
@@ -198,7 +198,7 @@ def get_actor_display_name(actor, truncate=250):
 
 
 class World(object):
-    def __init__(self, client, carla_world, hud, history, actor_filter, settings):
+    def __init__(self, client, carla_world, hud, history, actor_filter, settings, hq_recording=False):
         self.client = client
         self.world = carla_world
         self.map = self.world.get_map()
@@ -244,6 +244,10 @@ class World(object):
         self._vehicle_spawner = VehicleSpawner(self.client, self.world)
 
         # Other settings 
+        self._initialize_settings(settings)
+        self._hq_recording = hq_recording
+        self.restart()
+        self.world.on_tick(hud.on_world_tick)
         self._current_traffic_light = 0
         self._client_ap_active = False
         self._quit_next = False
@@ -374,7 +378,8 @@ class World(object):
                                 destination_point.location.z))
         
         # Set up the sensors.
-        self.camera_manager = CameraManager(self.player, self._client_ap, self.hud, self.history)
+        self.camera_manager = CameraManager(self.player, self._client_ap, self.hud,
+                                            self.history, self._hq_recording)
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
@@ -389,7 +394,7 @@ class World(object):
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
-        #self.next_rain()
+        #self.next_weather()
         self.hud._episode_start_time = self.hud.simulation_time
 
 
@@ -695,6 +700,7 @@ class KeyboardControl(object):
                     world.history.update_hlc(RoadOption.CHANGELANELEFT)
                     world.hud.notification('CHANGE LANE LEFT')
                 elif event.key == K_KP9:
+                    self._active_hlc = RoadOption.CHANGELANERIGHT
                     world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                     world.hud.notification('CHANGE LANE RIGHT')
 
@@ -900,9 +906,9 @@ class KeyboardControl(object):
         info["speed_limit"] = player.get_speed_limit() / 3.6
         info["hlc"] = world.history._latest_hlc
         if world.map.name == "Town01":
-            info["environment"] = Enviornment.RURAL
+            info["environment"] = Environment.RURAL
         elif world.map.name == "Town04":
-            info["environment"] = Enviornment.HIGHWAY
+            info["environment"] = Environment.HIGHWAY
 
         steer = 0
         throttle = 0
@@ -916,7 +922,7 @@ class KeyboardControl(object):
         
         self._control.throttle = max(min(float(throttle), 1),0)
         
-        self._control.brake = 1 if float(brake) > 0.5 else 0
+        self._control.brake = 1 if float(brake) > 0.3 else 0
 
     def _parse_vehicle_keys(self, world, keys, milliseconds):
         self._control.throttle = 1.0 if keys[K_UP] or keys[K_w] else 0.0
@@ -1216,7 +1222,7 @@ class HelpText(object):
 
 
 class CameraManager(object):
-    def __init__(self, parent_actor, client_ap, hud, history):
+    def __init__(self, parent_actor, client_ap, hud, history, hq_recording=False):
         self.sensor = None
         self._surface = None
         self._parent = parent_actor
@@ -1224,8 +1230,9 @@ class CameraManager(object):
         self._hud = hud
         self._history = history
         self._recording = False 
-        self._capture_rate = 3
+        self._capture_rate = 1 if hq_recording else 3
         self._frame_number = 1
+        self._hq_recording = hq_recording
         self._camera_transforms = [
             carla.Transform(
                 carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
@@ -1315,6 +1322,21 @@ class CameraManager(object):
             image, "right_center", "rgb"))
         self._recording_sensors.append(sensor)
 
+        if self._hq_recording:
+            sensor_bp = self._parent.get_world().get_blueprint_library().find(
+                'sensor.camera.rgb')
+            sensor_bp.set_attribute('image_size_x', "1920")
+            sensor_bp.set_attribute('image_size_y', "1080")
+
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=-0.5, z=2.0)),
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image_hq(
+                image, "hq_record", "rgb"))
+            self._recording_sensors.append(sensor)
+
+
     def _destroy_sensors(self):
         for sensor in self._recording_sensors:
             sensor.destroy()
@@ -1402,7 +1424,7 @@ class CameraManager(object):
 
 
 class History:
-    def __init__(self, output_folder):
+    def __init__(self, output_folder, environment):
         self._latest_images = {}
         self._image_history = []
         self._measurements_history = []
@@ -1414,6 +1436,7 @@ class History:
         self._latest_client_autopilot_control = None
         self.control_type = None
         self._latest_hlc = None
+        self._environment = environment
 
         self._weather_index = 0
 
@@ -1436,13 +1459,18 @@ class History:
         self._frame_number = 0
         self._latest_client_autopilot_control = None
         self._latest_hlc = RoadOption.LANEFOLLOW
-
+        
     def update_weather_index(self, weather_index): 
         self._weather_index = weather_index
 
     def update_image(self, image, position, sensor_type):
         if image.raw_data:
             img = np.reshape(np.array(image.raw_data), (160, 350, 4))[:, :, :3]
+            self._latest_images[position + "_" + sensor_type] = img
+
+    def update_image_hq(self, image, position, sensor_type):
+        if image.raw_data:
+            img = np.reshape(np.array(image.raw_data), (1080, 1920, 4))[:, :, :3]
             self._latest_images[position + "_" + sensor_type] = img
 
     def update_client_autopilot_control(self, control): 
@@ -1465,6 +1493,7 @@ class History:
             client_ap_c = self._latest_client_autopilot_control
 
             hlc = client_ap._local_planner._target_road_option
+
         else:
             client_ap_c = None
             hlc = self._latest_hlc
@@ -1478,12 +1507,16 @@ class History:
         output_path = Path(self._output_folder + '/' + self._timestamp)
         image_path = output_path / "imgs"
 
+
+
         red_light = 0 if player.get_traffic_light_state(
         ) == carla.TrafficLightState.Red else 1
 
         speed = math.sqrt(v.x**2 + v.y**2 + v.z**2)
         if math.isnan(c.steer) or (self.control_type == ControlType.CLIENT_AP and math.isnan(client_ap_c.steer)):
             return 
+                
+            
         self._driving_log = self._driving_log.append(
             pd.Series([
                 "imgs/forward_center_rgb_%08d.png" % self._frame_number,
@@ -1499,7 +1532,7 @@ class History:
                 red_light,
                 player.get_speed_limit() / 3.6, 
                 hlc.value, 
-                Enviornment.HIGHWAY.value,
+                self._environment.value,
                 self._weather_index
 
             ],
@@ -1507,6 +1540,7 @@ class History:
             ignore_index=True)
 
     def save_to_disk(self):
+
         output_path = Path(self._output_folder + '/' + self._timestamp)
         image_path = output_path / "imgs"
         image_path.mkdir(parents=True, exist_ok=True)
@@ -1539,12 +1573,17 @@ def game_loop(args, settings):
         sim_world = client.get_world()
         client.set_timeout(15.0)
 
+        # Get environment 
+        if sim_world.get_map().name == "Town01":
+            environment = Environment.RURAL
+        elif sim_world.get_map().name == "Town04":
+            environment = Environment.HIGHWAY
+
         display = pygame.display.set_mode((args.width, args.height),
                                           pygame.HWSURFACE | pygame.DOUBLEBUF)
 
         hud = HUD(args.width, args.height)
-        history = History(args.output)
-
+        history = History(args.output, environment)
 
         world = World(
             client,
@@ -1645,6 +1684,13 @@ def main():
         action='store_true',
         default=False,
         help='use steering wheel to control vehicle')
+    argparser.add_argument(
+        '-hqr',
+        dest='hq_recording',
+        action='store_true',
+        default=False,
+        help='record high quality images')
+
 
     args = argparser.parse_args()
     args.width, args.height = [int(x) for x in args.res.split('x')]
