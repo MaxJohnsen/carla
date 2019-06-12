@@ -585,8 +585,8 @@ class MapImage(object):
         
         def draw_spawn_points(surface, color=COLOR_SCARLET_RED_0):
             spawn_points = carla_map.get_spawn_points()
-            font_size = world_to_pixel_width(1)
-            font = pygame.font.SysFont('Arial', font_size, True)
+            font_size = world_to_pixel_width(2)
+            font = pygame.font.SysFont('Arial', font_size)
             for i in range(len(spawn_points)):
                 sp = spawn_points[i]
 
@@ -909,8 +909,8 @@ class ModuleWorld(object):
         if len(hero_vehicles) > 0:
             self.hero_actor = random.choice(hero_vehicles)
             self.hero_transform = self.hero_actor.get_transform()
-        else:
-            self._spawn_hero()
+        """else:
+            self._spawn_hero()"""
 
     def _spawn_hero(self):
         # Get a random blueprint.
