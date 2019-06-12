@@ -394,7 +394,7 @@ class World(object):
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
-        #self.next_weather()
+        self.next_weather(allow_rain=False)
         self.hud._episode_start_time = self.hud.simulation_time
 
 
@@ -406,10 +406,20 @@ class World(object):
         self.world.set_weather(preset[0])
         self.history.update_weather_index(self._weather_index)
     
-    def next_weather(self, reverse=False):
+    def next_weather(self, reverse=False, allow_rain=True, allow_clear=True):
         """ Change weather to next weather """
         self._weather_index += -1 if reverse else 1
         self._weather_index %= len(self._weather_presets)
+
+        # Skip weather with rain 
+        if self._weather_index > 3 and not allow_rain: 
+            self._weather_index = 0
+        
+        # Skip weather without rain 
+        if self._weather_index < 4 and not allow_clear: 
+            self._weather_index = 4
+    
+
         preset = self._weather_presets[self._weather_index]
         self.hud.notification('Weather: %s' % preset[1])
         self.player.get_world().set_weather(preset[0])
@@ -428,7 +438,7 @@ class World(object):
 
         self.history.update_weather_index(self._weather_index)
 
-    def reset_weahter(self): 
+    def reset_weather(self): 
         """ Set weather to first weather """
         preset = self._weather_presets[0]
         self.hud.notification('Weather: %s' % preset[1])
@@ -820,7 +830,8 @@ class KeyboardControl(object):
             distance = math.sqrt(dx * dx + dy * dy)
 
             # Change route if client AP has reached its destination
-            if distance<60:
+            print(distance)
+            if distance<16:
                 world.hud.notification("Route Complete")
                 world.restart()
                 # Exit program if all routes are finished 
@@ -1620,7 +1631,7 @@ def game_loop(args, settings):
         if world is not None:
 
             # Reset weather so program always starts in CLEAR NOON 
-            world.reset_weahter()
+            # world.reset_weather()
             print("Destroying world")
             world.destroy()
 
