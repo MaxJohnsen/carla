@@ -394,7 +394,7 @@ class World(object):
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
-        self.next_weather(allow_rain=False)
+        #self.next_weather(allow_clear=False)
         self.hud._episode_start_time = self.hud.simulation_time
 
 
@@ -830,8 +830,7 @@ class KeyboardControl(object):
             distance = math.sqrt(dx * dx + dy * dy)
 
             # Change route if client AP has reached its destination
-            print(distance)
-            if distance<16:
+            if distance<17:
                 world.hud.notification("Route Complete")
                 world.restart()
                 # Exit program if all routes are finished 
