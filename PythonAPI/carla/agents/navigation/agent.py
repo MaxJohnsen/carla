@@ -13,7 +13,7 @@ The agent also responds to traffic lights. """
 from enum import Enum
 
 import carla
-from agents.tools.misc import is_within_distance_ahead, compute_magnitude_angle, get_speed
+from agents.tools.misc import is_within_distance_ahead, get_distance_ahead, compute_magnitude_angle, get_speed
 
 
 class AgentState(Enum):
@@ -161,6 +161,40 @@ class Agent(object):
 
         return (False, None)
 
+    def get_closest_vehicle_ahead(self, vehicle_list, proximity_threshold):
+        ego_vehicle_location = self._vehicle.get_location()
+        ego_vehicle_waypoint = self._map.get_waypoint(ego_vehicle_location)
+        ego_vehicle_yaw = self._vehicle.get_transform().rotation.yaw
+        
+        closest_distance = float('inf')
+        closest_vehicle = None
+
+        for target_vehicle in vehicle_list:
+            # do not account for the ego vehicle
+            if target_vehicle.id == self._vehicle.id:
+                continue
+
+            target_vehicle_yaw = target_vehicle.get_transform().rotation.yaw
+
+            angle_diff = ego_vehicle_yaw-target_vehicle_yaw
+            
+            if abs((angle_diff + 180) % 360 - 180) >= 100:
+                continue
+
+            target_vehicle_waypoint = self._map.get_waypoint(target_vehicle.get_location())
+
+            loc = target_vehicle.get_location()
+
+            distance = get_distance_ahead(loc, ego_vehicle_location,
+                                self._vehicle.get_transform().rotation.yaw,
+                                proximity_threshold)
+            if distance != False:
+                if closest_distance>distance:
+                    closest_distance=distance
+                    closest_vehicle = target_vehicle
+        
+        return (closest_vehicle, closest_distance)
+
     def _is_vehicle_hazard(self, vehicle_list):
         """
         Check if a given vehicle is an obstacle in our way. To this end we take
@@ -178,29 +212,10 @@ class Agent(object):
                    and False otherwise
                  - vehicle is the blocker object itself
         """
+        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, 10)
 
-        ego_vehicle_location = self._vehicle.get_location()
-        ego_vehicle_waypoint = self._map.get_waypoint(ego_vehicle_location)
-
-        for target_vehicle in vehicle_list:
-            # do not account for the ego vehicle
-            if target_vehicle.id == self._vehicle.id:
-                continue
-
-            # if the object is not in our lane it's not an obstacle
-            target_vehicle_waypoint = self._map.get_waypoint(target_vehicle.get_location())
-            if target_vehicle_waypoint.road_id != ego_vehicle_waypoint.road_id or \
-                    target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id:
-                continue
-
-            loc = target_vehicle.get_location()
-            proximity_threshold = max(self._proximity_threshold, get_speed(self._vehicle)/2.0)
-            if is_within_distance_ahead(loc, ego_vehicle_location,
-                                        self._vehicle.get_transform().rotation.yaw,
-                                        proximity_threshold):
-                if get_speed(self._vehicle)+1> get_speed(target_vehicle): 
-                    return (True, target_vehicle)
-
+        if(vehicle != None):
+            return (True, vehicle)
         return (False, None)
 
     def emergency_stop(self):
