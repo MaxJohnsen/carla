@@ -69,7 +69,7 @@ class LocalPlanner(object):
 
     def set_target_speed(self, target_speed):
         if self._vehicle:		        
-            self._target_speed = target_speed
+            self._target_speed = target_speed+2
 
     def reset_vehicle(self):
         self._vehicle = None
@@ -83,7 +83,7 @@ class LocalPlanner(object):
         :return:
         """
         # default params
-        self._dt = 1.0 / 20.0
+        self._dt = 1.0 / 30.0
         self._target_speed = 20.0  # Km/h
         self._sampling_radius = self._target_speed * 1 / 3.6  # 1 seconds horizon
         self._min_distance = self._sampling_radius * self.MIN_DISTANCE_PERCENTAGE
@@ -93,9 +93,9 @@ class LocalPlanner(object):
             'K_I': 1.4,
             'dt': self._dt}
         args_longitudinal_dict = {
-            'K_P': 1.0,
-            'K_D': 0,
-            'K_I': 1,
+            'K_P': 0.1,
+            'K_D': 0.0,
+            'K_I': 2,
             'dt': self._dt}
 
         # parameters overload

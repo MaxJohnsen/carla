@@ -395,7 +395,7 @@ class World(object):
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
-        self.next_weather(allow_clear=False)
+        self.next_weather(allow_rain=False)
         self.hud._episode_start_time = self.hud.simulation_time
 
 
@@ -596,7 +596,7 @@ class KeyboardControl(object):
 
     def parse_events(self, client, world, clock):
 
-        set_green_traffic_light(world.player)
+        #set_green_traffic_light(world.player)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
