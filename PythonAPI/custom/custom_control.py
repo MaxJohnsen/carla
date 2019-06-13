@@ -213,9 +213,10 @@ class World(object):
         # Weather 
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
+        
 
         # Default pawnpoints 
-        self._spawn_point_start = 51
+        self._spawn_point_start = 1
         self._spawn_point_destination = 7
         
         # Eval mode 
@@ -717,7 +718,7 @@ class KeyboardControl(object):
                     world.hud.notification('CHANGE LANE RIGHT')
 
         world.history.control_type = self._control_type
-
+        
         # Evaluationg multiple models 
         if world._eval_mode: 
             if self._control_type != ControlType.DRIVE_MODEL: 
@@ -738,6 +739,7 @@ class KeyboardControl(object):
                 # Get road option 
                 _, road_option = world._eval_routes[world._eval_routes_idx][world._eval_route_idx]
                 
+                world.hud.notification(RoadOption(road_option).name)
                 # Update HLC
                 world.history.update_hlc(RoadOption(road_option))
                 self._active_hlc = RoadOption(road_option)
@@ -832,7 +834,7 @@ class KeyboardControl(object):
             distance = math.sqrt(dx * dx + dy * dy)
 
             # Change route if client AP has reached its destination
-            if distance<17:
+            if distance<20:
                 world.hud.notification("Route Complete")
                 world.restart()
                 # Exit program if all routes are finished 
@@ -917,7 +919,7 @@ class KeyboardControl(object):
         info["traffic_light"] = red_light
         info["speed_limit"] = player.get_speed_limit() / 3.6
         info["hlc"] = world.history._latest_hlc
-        if world.map.name == "Town01":
+        if world.map.name == "Town01" or world.map.name == "Town02":
             info["environment"] = Environment.RURAL
         elif world.map.name == "Town04":
             info["environment"] = Environment.HIGHWAY
@@ -1587,7 +1589,7 @@ def game_loop(args, settings):
         client.set_timeout(15.0)
 
         # Get environment 
-        if sim_world.get_map().name == "Town01":
+        if sim_world.get_map().name == "Town01" or sim_world.get_map().name == "Town02":
             environment = Environment.RURAL
         elif sim_world.get_map().name == "Town04":
             environment = Environment.HIGHWAY
