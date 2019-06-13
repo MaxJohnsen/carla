@@ -394,7 +394,7 @@ class World(object):
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
 
-        self.next_weather(allow_rain=False)
+        self.next_weather(allow_clear=False)
         self.hud._episode_start_time = self.hud.simulation_time
 
 
@@ -545,6 +545,8 @@ class KeyboardControl(object):
     def _initialize_settings(self, settings):
         self._control_type = ControlType[settings.get("Settings", "ControlType", fallback="MANUAL")]
         self._noise_amount = float(settings.get("Settings", "Noise", fallback="0"))
+        if self._noise_amount != 0: 
+            self._noise_enabled = True
         if self._drive_model is None and self._control_type == ControlType.DRIVE_MODEL: 
             self._control_type = ControlType.MANUAL
     
@@ -831,7 +833,7 @@ class KeyboardControl(object):
 
             # Change route if client AP has reached its destination
             print(distance)
-            if distance<16:
+            if distance<17:
                 world.hud.notification("Route Complete")
                 world.restart()
                 # Exit program if all routes are finished 
@@ -1080,22 +1082,23 @@ class HUD(object):
         self._info_text += [
             'Number of vehicles: % 8d' % len(vehicles)
         ]
-        if world._eval_num is not None and world._eval_num_current is not None: 
-            self._info_text += ['']
-            self._info_text += ['Eval run: %d/%d' % (world._eval_num_current, world._eval_num )]
+        if world._eval_mode: 
+            if world._eval_num is not None and world._eval_num_current is not None: 
+                self._info_text += ['']
+                self._info_text += ['Eval run: %d/%d' % (world._eval_num_current, world._eval_num )]
 
-        if self._drive_model_name is not None: 
-            self._info_text += ['Model: %s (%d/%d)' % (self._drive_model_name, self._drive_model_idx+1, self._drive_model_num)]
+            if self._drive_model_name is not None: 
+                self._info_text += ['Model: %s (%d/%d)' % (self._drive_model_name, self._drive_model_idx+1, self._drive_model_num)]
 
-        if world._eval_cars_idx is not None and world._eval_cars is not None: 
-            self._info_text += ['Spawned vehicles: %d (%d/%d)' % (world._eval_cars[world._eval_cars_idx], world._eval_cars_idx+1, len(world._eval_cars))]
+            if world._eval_cars_idx is not None and world._eval_cars is not None: 
+                self._info_text += ['Spawned vehicles: %d (%d/%d)' % (world._eval_cars[world._eval_cars_idx], world._eval_cars_idx+1, len(world._eval_cars))]
 
-        if world._eval_weathers_idx is not None and world._eval_weathers is not None: 
-            self._info_text += ['Eval weather: %d/%d' % (world._eval_weathers_idx+1, len(world._eval_weathers))]
+            if world._eval_weathers_idx is not None and world._eval_weathers is not None: 
+                self._info_text += ['Eval weather: %d/%d' % (world._eval_weathers_idx+1, len(world._eval_weathers))]
 
-        if world._eval_routes_idx is not None and world._eval_routes is not None: 
-            self._info_text += ['Eval route: %d/%d' % (world._eval_routes_idx+1, len(world._eval_routes))]
-            self._info_text += ['']
+            if world._eval_routes_idx is not None and world._eval_routes is not None: 
+                self._info_text += ['Eval route: %d/%d' % (world._eval_routes_idx+1, len(world._eval_routes))]
+                self._info_text += ['']
 
         self._info_text.append(('Speed: ', '%.0f/%.0f'%(speed, speed_limit)))
 
