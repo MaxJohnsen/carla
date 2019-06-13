@@ -832,7 +832,6 @@ class KeyboardControl(object):
             distance = math.sqrt(dx * dx + dy * dy)
 
             # Change route if client AP has reached its destination
-            print(distance)
             if distance<17:
                 world.hud.notification("Route Complete")
                 world.restart()
