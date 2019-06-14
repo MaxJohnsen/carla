@@ -26,3 +26,8 @@ class Environment(Enum):
     
 class NoiseMode(Enum):
     RANDOM = 0
+
+class WeatherType(Enum): 
+    ALL = 0 
+    CLEAR = 1 
+    RAIN = 2 

@@ -105,7 +105,7 @@ import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
 from agents.navigation.basic_agent import BasicAgent
-from agents.tools.enums import RoadOption, Environment, ControlType
+from agents.tools.enums import RoadOption, Environment, ControlType, WeatherType
 from agents.tools.misc import distance_vehicle
 from vehicle_spawner import VehicleSpawner
 from helpers import is_valid_lane_change, get_parameter_text, set_green_traffic_light, get_models
@@ -198,7 +198,7 @@ def get_actor_display_name(actor, truncate=250):
 
 
 class World(object):
-    def __init__(self, client, carla_world, hud, history, actor_filter, settings, hq_recording=False):
+    def __init__(self, client, carla_world, hud, environment, history, actor_filter, settings, hq_recording=False):
         self.client = client
         self.world = carla_world
         self.map = self.world.get_map()
@@ -213,6 +213,8 @@ class World(object):
         # Weather 
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
+        self._change_weather = None 
+        self._weather_type = None 
         
 
         # Default pawnpoints 
@@ -245,10 +247,10 @@ class World(object):
         self._vehicle_spawner = VehicleSpawner(self.client, self.world)
 
         # Other settings 
+        self._environment = environment
         self._initialize_settings(settings)
         self._hq_recording = hq_recording
-        self.restart()
-        self.world.on_tick(hud.on_world_tick)
+        #self.world.on_tick(hud.on_world_tick)
         self._current_traffic_light = 0
         self._client_ap_active = False
         self._quit_next = False
@@ -256,6 +258,7 @@ class World(object):
 
         # Init settings 
         self._initialize_settings(settings)
+        
         self.restart()
         self.world.on_tick(hud.on_world_tick)
         
@@ -264,25 +267,32 @@ class World(object):
     def _initialize_settings(self, settings):
         s = {}
 
-        # Read settings
+        # Read recording mode settings
         routes = settings.get("Recording", "RecordingRoutes", fallback=None)
-        auto_record = settings.get("Recording", "AutoRecord", fallback=None)
+        self._auto_record = True if settings.get("Recording", "AutoRecord", fallback="No").strip().lower() == "yes" else False 
 
-        eval_mode = settings.get("Eval", "EvalMode", fallback=None)
+        # Read eval mode settings
+        self._eval_mode = True if settings.get("Eval", "EvalMode", fallback="No").strip().lower() == "yes" else False 
         self._eval_num = int(settings.get("Eval", "EvalNum", fallback=1))
         self._eval_num_current = 1 
         eval_cars = settings.get("Eval", "EvalCars", fallback=None)
         eval_routes = settings.get("Eval", "EvalRoutes", fallback=None)
         eval_weathers = settings.get("Eval", "EvalWeathers", fallback=None)
 
+        # Read vehicle settings 
         self._num_vehicles_min = int(settings.get("Spawning", "NumberOfVehiclesMin", fallback=0))
         self._num_vehicles_max = int(settings.get("Spawning", "NumberOfVehiclesMax", fallback=0))
         self._spawning_radius = float(settings.get("Spawning", "SpawnRadius", fallback=0))
 
+        # Read autotimeout: The duration of an episode in server autopilot 
         self._auto_timeout = float(settings.get("Settings", "AutoTimeout", fallback=0))
-        
 
-        # Parse settings 
+        # Read weather settings 
+        self._change_weather = True if settings.get("Weather", "ChangeWeather", fallback="No") == "Yes" else False 
+        self._weather_index = -1 if self._change_weather else 0
+        self._weather_type = WeatherType[settings.get("Weather", "WeatherType", fallback="ALL")]
+
+        # Parse settings from string to lists 
         if routes: 
             routes = routes.split()
             routes = [ast.literal_eval(r) for r in routes]
@@ -307,10 +317,7 @@ class World(object):
             eval_weathers = [ast.literal_eval(w) for w in eval_weathers][0]
             self._eval_weathers = eval_weathers
             self._eval_weathers_idx = 0 
-        if eval_mode:
-            self._eval_mode = True if eval_mode.strip() == "Yes" else False
-        if auto_record:
-            self._auto_record = True if auto_record.strip() == "Yes" else False
+        
 
         
 
@@ -326,6 +333,7 @@ class World(object):
         blueprint = self.world.get_blueprint_library().filter(
             'vehicle.tesla.*')[0]
 
+        # Set the vehicle as hero player 
         blueprint.set_attribute('role_name', 'hero')
 
         # Destroy player 
@@ -390,12 +398,14 @@ class World(object):
             self.camera_manager.toggle_recording()
         actor_type = get_actor_display_name(self.player)
 
-        # Spawn other vehicles 
-        if self._num_vehicles_max != 0 and self._spawning_radius is not None: 
+        # Spawn other vehicles, but not in eval mode  
+        if not self._eval_mode and self._num_vehicles_max != 0 and self._spawning_radius is not None: 
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
+        # Change weather 
+        if self._change_weather == True:
+            self.next_weather(weather_type=self._weather_type)
 
-        self.next_weather(allow_rain=False)
         self.hud._episode_start_time = self.hud.simulation_time
 
 
@@ -407,32 +417,20 @@ class World(object):
         self.world.set_weather(preset[0])
         self.history.update_weather_index(self._weather_index)
     
-    def next_weather(self, reverse=False, allow_rain=True, allow_clear=True):
+    def next_weather(self, reverse=False, weather_type=None):
         """ Change weather to next weather """
         self._weather_index += -1 if reverse else 1
         self._weather_index %= len(self._weather_presets)
-
-        # Skip weather with rain 
-        if self._weather_index > 3 and not allow_rain: 
-            self._weather_index = 0
         
-        # Skip weather without rain 
-        if self._weather_index < 4 and not allow_clear: 
+        # Only choose clear weather 
+        if weather_type == WeatherType.CLEAR and self._weather_index > 3: 
+            self._weather_index = 0
+            
+        # Only choose rainy/wet weather 
+        if weather_type == WeatherType.RAIN and self._weather_index < 4: 
             self._weather_index = 4
     
 
-        preset = self._weather_presets[self._weather_index]
-        self.hud.notification('Weather: %s' % preset[1])
-        self.player.get_world().set_weather(preset[0])
-
-        self.history.update_weather_index(self._weather_index)
-
-    def next_rain(self, reverse=False):
-        """ Set weather to next rain id """
-        if self._weather_index < 4 or self._weather_index > 8:
-            self._weather_index = 4
-        else: 
-            self._weather_index += 1 
         preset = self._weather_presets[self._weather_index]
         self.hud.notification('Weather: %s' % preset[1])
         self.player.get_world().set_weather(preset[0])
@@ -507,9 +505,10 @@ class KeyboardControl(object):
         # Settings 
         self._steering_wheel_enabled = use_steering_wheel
         self._control_type = None 
-
+        self._red_lights_allowed = None 
         self._noise_enabled = False
         self._noise_amount = None
+        self._environment = None 
 
         # History 
         self._lane_change_activated = None
@@ -545,6 +544,7 @@ class KeyboardControl(object):
     
     def _initialize_settings(self, settings):
         self._control_type = ControlType[settings.get("Settings", "ControlType", fallback="MANUAL")]
+        self._red_lights_allowed = True if settings.get("Settings", "RedLights", fallback="No") == "Yes" else False 
         self._noise_amount = float(settings.get("Settings", "Noise", fallback="0"))
         if self._noise_amount != 0: 
             self._noise_enabled = True
@@ -596,7 +596,8 @@ class KeyboardControl(object):
 
     def parse_events(self, client, world, clock):
 
-        #set_green_traffic_light(world.player)
+        if not self._red_lights_allowed: 
+            set_green_traffic_light(world.player)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
@@ -919,10 +920,7 @@ class KeyboardControl(object):
         info["traffic_light"] = red_light
         info["speed_limit"] = player.get_speed_limit() / 3.6
         info["hlc"] = world.history._latest_hlc
-        if world.map.name == "Town01" or world.map.name == "Town02":
-            info["environment"] = Environment.RURAL
-        elif world.map.name == "Town04":
-            info["environment"] = Environment.HIGHWAY
+        info["environment"] = world._environment
 
         steer = 0
         throttle = 0
@@ -947,24 +945,6 @@ class KeyboardControl(object):
             self._steer_cache += steer_increment
         else:
             self._steer_cache = 0.0
-
-        # Update HLC 
-        """if keys[K_KP1]: 
-            world.history.update_hlc(RoadOption.CHANGELANELEFT.value)
-        elif keys[K_KP3]: 
-            world.history.update_hlc(RoadOption.CHANGELANERIGHT.value)
-        elif keys[K_KP4]: 
-            world.history.update_hlc(RoadOption.LEFT.value)
-        elif keys[K_KP5]: 
-            world.history.update_hlc(RoadOption.LANEFOLLOW.value)
-        elif keys[K_KP6]: 
-            world.history.update_hlc(RoadOption.RIGHT.value)
-        elif keys[K_KP8]: 
-            world.history.update_hlc(RoadOption.STRAIGHT.value)
-        
-        else: 
-            world.history.update_hlc(RoadOption.LANEFOLLOW.value)"""
-
 
         self._steer_cache = min(0.7, max(-0.7, self._steer_cache))
         self._control.steer = round(self._steer_cache, 1)
@@ -1067,6 +1047,11 @@ class HUD(object):
                                 (t.location.x, t.location.y)),
             'Height:  % 18.0f m' % t.location.z, ''
         ]
+        if world._auto_record: 
+            self._info_text += ['Mode: Recording']
+
+        if world._eval_mode: 
+            self._info_text += ['Mode: Eval']
         if world._current_route_num is not None and world._tot_route_num is not None: 
             self._info_text += ['Route status: % 11d/%2d' % (world._current_route_num, world._tot_route_num)]
         if isinstance(c, carla.VehicleControl):
@@ -1584,32 +1569,36 @@ def game_loop(args, settings):
     world = None
 
     try:
+
         client = carla.Client(args.host, args.port)
         sim_world = client.get_world()
+        map_name = sim_world.get_map().name
         client.set_timeout(15.0)
 
         # Get environment 
-        if sim_world.get_map().name == "Town01" or sim_world.get_map().name == "Town02":
+        if map_name == "Town01" or map_name == "Town02":
             environment = Environment.RURAL
-        elif sim_world.get_map().name == "Town04":
+        elif map_name == "Town04":
             environment = Environment.HIGHWAY
 
+        # Set display 
         display = pygame.display.set_mode((args.width, args.height),
                                           pygame.HWSURFACE | pygame.DOUBLEBUF)
 
         hud = HUD(args.width, args.height)
         history = History(args.output, environment)
-
         world = World(
             client,
             sim_world, 
-            hud, 
+            hud,
+            environment, 
             history, 
             args.filter,
             settings)
         
 
         models = None 
+        
         # Program can be called with a folder of models to test 
         if args.models is not None:
             models = get_models(Path(args.models)) 
@@ -1635,7 +1624,7 @@ def game_loop(args, settings):
         if world is not None:
 
             # Reset weather so program always starts in CLEAR NOON 
-            # world.reset_weather()
+            world.reset_weather()
             print("Destroying world")
             world.destroy()
 
