@@ -50,19 +50,7 @@ class BasicAgent(Agent):
 
     def set_target_speed(self, target_speed):
 
-        actor_list = self._world.get_actors()
-        vehicle_list = actor_list.filter("*vehicle*")
-
-        ego_speed = get_speed(self._vehicle)
-
-        proximity_distance = ego_speed/2.0
-
-        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, proximity_distance)
-
-        if vehicle is None:
-            self._local_planner.set_target_speed(target_speed)
-        else:
-            self._local_planner.set_target_speed(min(target_speed, get_speed(vehicle)))
+        self._local_planner.set_target_speed(target_speed)
 
 
     def set_destination(self, location):
@@ -138,5 +126,10 @@ class BasicAgent(Agent):
             self._state = AgentState.NAVIGATING
             # standard local planner behavior
             control = self._local_planner.run_step(debug=debug)
+
+            close_vehicle, _ = self._is_vehicle_close(vehicle_list)
+
+            if close_vehicle:
+                control.throttle =0
 
         return control

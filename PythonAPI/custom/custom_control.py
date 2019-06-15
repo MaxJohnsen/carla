@@ -316,7 +316,7 @@ class World(object):
             eval_weathers = eval_weathers.split()
             eval_weathers = [ast.literal_eval(w) for w in eval_weathers][0]
             self._eval_weathers = eval_weathers
-            self._eval_weathers_idx = 0 
+            self._eval_weathers_idx = eval_weathers[0]
         
 
         
@@ -330,8 +330,10 @@ class World(object):
         cam_pos_index = self.camera_manager._transform_index if self.camera_manager is not None else 0
 
         # Get a vehilce blueprint.
-        blueprint = self.world.get_blueprint_library().filter(
-            'vehicle.tesla.*')[0]
+        #blueprint = self.world.get_blueprint_library().filter('vehicle.tesla.*')[0]
+
+        # Get a vehilce blueprint.
+        blueprint = self.world.get_blueprint_library().filter('vehicle.audi.etron')[0]
 
         # Set the vehicle as hero player 
         blueprint.set_attribute('role_name', 'hero')
@@ -1234,9 +1236,8 @@ class CameraManager(object):
         self._frame_number = 1
         self._hq_recording = hq_recording
         self._camera_transforms = [
-            carla.Transform(
-                carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
-            carla.Transform(carla.Location(x=1.6, z=1.7))
+            carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
+            carla.Transform(carla.Location(x=0.5, z=2.3), carla.Rotation(pitch=-5)),
         ]
         self._transform_index = 1
         self._sensors = [
@@ -1280,7 +1281,7 @@ class CameraManager(object):
 
         sensor = self._parent.get_world().spawn_actor(
             sensor_bp,
-            carla.Transform(carla.Location(x=0.5, z=1.7)),
+            carla.Transform(carla.Location(x=0.5, z=2.3), carla.Rotation(pitch=-5)),
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
             image, "forward_center", "rgb"))
@@ -1288,7 +1289,7 @@ class CameraManager(object):
 
         sensor = self._parent.get_world().spawn_actor(
             sensor_bp,
-            carla.Transform(carla.Location(x=0.5, y=-0.7, z=1.7)),
+            carla.Transform(carla.Location(x=0.5, y=-0.7, z=2.3), carla.Rotation(pitch=-5)),
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
             image, "forward_left", "rgb"))
@@ -1296,7 +1297,7 @@ class CameraManager(object):
 
         sensor = self._parent.get_world().spawn_actor(
             sensor_bp,
-            carla.Transform(carla.Location(x=0.5, y=0.7, z=1.7)),
+            carla.Transform(carla.Location(x=0.5, y=0.7, z=2.3), carla.Rotation(pitch=-5)),
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
             image, "forward_right", "rgb"))
@@ -1304,9 +1305,7 @@ class CameraManager(object):
 
         sensor = self._parent.get_world().spawn_actor(
             sensor_bp,
-            carla.Transform(
-                carla.Location(x=0, y=-0.5, z=1.8),
-                carla.Rotation(pitch=-20, yaw=-90)),
+            carla.Transform(carla.Location(x=0, y=-0.5, z=1.8),carla.Rotation(pitch=-20, yaw=-90)),        
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
             image, "left_center", "rgb"))
@@ -1314,9 +1313,7 @@ class CameraManager(object):
 
         sensor = self._parent.get_world().spawn_actor(
             sensor_bp,
-            carla.Transform(
-                carla.Location(x=0, y=0.5, z=1.8),
-                carla.Rotation(pitch=-20, yaw=90)),
+            carla.Transform(carla.Location(x=0, y=0.5, z=1.8),carla.Rotation(pitch=-20, yaw=-90)),        
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
             image, "right_center", "rgb"))

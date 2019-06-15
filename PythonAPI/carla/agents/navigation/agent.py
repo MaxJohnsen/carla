@@ -212,7 +212,31 @@ class Agent(object):
                    and False otherwise
                  - vehicle is the blocker object itself
         """
-        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, 10)
+
+        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, max(10,get_speed(self._vehicle)/1.75))
+
+        if(vehicle != None):
+            return (True, vehicle)
+        return (False, None)
+
+    def _is_vehicle_close(self, vehicle_list):
+        """
+        Check if a given vehicle is an obstacle in our way. To this end we take
+        into account the road and lane the target vehicle is on and run a
+        geometry test to check if the target vehicle is under a certain distance
+        in front of our ego vehicle.
+
+        WARNING: This method is an approximation that could fail for very large
+         vehicles, which center is actually on a different lane but their
+         extension falls within the ego vehicle lane.
+
+        :param vehicle_list: list of potential obstacle to check
+        :return: a tuple given by (bool_flag, vehicle), where
+                 - bool_flag is True if there is a vehicle ahead blocking us
+                   and False otherwise
+                 - vehicle is the blocker object itself
+        """
+        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, max(10*1.17,get_speed(self._vehicle)/1.75)*1.2)
 
         if(vehicle != None):
             return (True, vehicle)

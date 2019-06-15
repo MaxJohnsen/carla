@@ -48,6 +48,7 @@ class VehicleSpawner(object):
         self.blueprints = [x for x in self.blueprints if int(x.get_attribute('number_of_wheels')) == 4]
         self.blueprints = [x for x in self.blueprints if not x.id.endswith('isetta')]
         self.blueprints = [x for x in self.blueprints if not x.id.endswith('carlacola')]
+        self.blueprints = [x for x in self.blueprints if not x.id.endswith('t2')]
 
         valid_spawn_points = []
         for spawn_point in self.spawn_points:
