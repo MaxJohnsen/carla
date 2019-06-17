@@ -122,7 +122,5 @@ class LSTMKeras(ModelInterface):
             steer_angle = steer_curve_parameters[0]
             step_brake = 1 if brake > 0.5 else 0
 
-            print(brake)
-
             return (steer_angle, throttle, step_brake)
         return (0, 1.0, 0)

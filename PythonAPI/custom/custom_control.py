@@ -105,10 +105,10 @@ import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
 from agents.navigation.basic_agent import BasicAgent
-from agents.tools.enums import RoadOption, Environment, ControlType, WeatherType
-from agents.tools.misc import distance_vehicle
+from agents.tools.enums import RoadOption, Environment, ControlType, WeatherType, EventType
+from agents.tools.misc import distance_vehicle, get_distance
 from vehicle_spawner import VehicleSpawner
-from helpers import is_valid_lane_change, get_parameter_text, set_green_traffic_light, get_models
+from helpers import is_valid_lane_change, get_parameter_text, set_green_traffic_light, get_models, get_route_distance
 
 import argparse
 import collections
@@ -216,6 +216,8 @@ class World(object):
         self._change_weather = None 
         self._weather_type = None 
         
+        self.evaluator = Evaluator(self.hud, self)
+
 
         # Default pawnpoints 
         self._spawn_point_start = 1
@@ -232,6 +234,7 @@ class World(object):
         self._eval_route_idx = None     # Current route waypoint 
         self._eval_weathers = None 
         self._eval_weathers_idx = None 
+        self._eval_route_canceled = None
 
         # Route recording 
         self._new_spawn_point = None 
@@ -319,8 +322,6 @@ class World(object):
             self._eval_weathers_idx = eval_weathers[0]
         
 
-        
-
     def restart(self):
 
         self.history._initiate() 
@@ -330,11 +331,8 @@ class World(object):
         cam_pos_index = self.camera_manager._transform_index if self.camera_manager is not None else 0
 
         # Get a vehilce blueprint.
-        #blueprint = self.world.get_blueprint_library().filter('vehicle.tesla.*')[0]
-
-        # Get a vehilce blueprint.
-        blueprint = self.world.get_blueprint_library().filter('vehicle.audi.etron')[0]
-
+        blueprint = self.world.get_blueprint_library().filter(
+            'vehicle.audi.etron')[0]
         # Set the vehicle as hero player 
         blueprint.set_attribute('role_name', 'hero')
 
@@ -345,6 +343,7 @@ class World(object):
 
         # Choose starting spawnpoit in eval routes 
         if self._eval_mode is not None and self._eval_mode != False: 
+            self._eval_route_canceled = False
             spawn_point =  self.map.get_spawn_points()[self._eval_routes[self._eval_routes_idx][0][0]]
             destination_point =  self.map.get_spawn_points()[self._eval_routes[self._eval_routes_idx][-1][0]]
             self._spawn_point_start = self._eval_routes[self._eval_routes_idx][0][0]
@@ -394,6 +393,10 @@ class World(object):
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
+
+        if self._eval_mode is not None and self._eval_mode != False:
+            self.evaluator.initialize_sensors(self.player)
+            self.evaluator.new_episode()
         
         # Turn on recording at new route 
         if self._auto_record: 
@@ -405,11 +408,10 @@ class World(object):
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
         # Change weather 
-        if self._change_weather == True:
+        if self._change_weather == True and self._eval_mode == False:
             self.next_weather(weather_type=self._weather_type)
 
         self.hud._episode_start_time = self.hud.simulation_time
-
 
     def set_weather(self, weather_idx): 
         """ Set weather to given id"""
@@ -469,6 +471,9 @@ class World(object):
         self.hud.tick(self, clock)
         self.camera_manager.tick()
 
+        if self.evaluator:
+            self.evaluator.tick()
+
     def render(self, display):
         self.camera_manager.render(display)
         self.hud.render(display)
@@ -488,6 +493,9 @@ class World(object):
                 actor.destroy()
         self.camera_manager._destroy_sensors()
         self._vehicle_spawner.destroy_vehicles() 
+        
+        if self.evaluator:
+            self.evaluator.destroy_sensors()
 
 
 # ==============================================================================
@@ -579,6 +587,7 @@ class KeyboardControl(object):
             self._current_model_idx += 1 
             if len(self._models)> self._current_model_idx: 
                 self._initialize_model()
+                self._world.evaluator.initialize_model()
                 return True 
             else:
                 print("INFO: No more new models") 
@@ -597,7 +606,6 @@ class KeyboardControl(object):
         
 
     def parse_events(self, client, world, clock):
-
         if not self._red_lights_allowed: 
             set_green_traffic_light(world.player)
         for event in pygame.event.get():
@@ -624,9 +632,12 @@ class KeyboardControl(object):
                 if self._is_quit_shortcut(event.key):
                     return True
                 elif event.key == K_BACKSPACE:
-                    world.restart()
-                    if self._control_type == ControlType.SERVER_AP:
-                        world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
+                    if world._eval_mode:
+                        world.hud.notification('Cannot restart in eval mode')
+                    else:
+                        world.restart()
+                        if self._control_type == ControlType.SERVER_AP:
+                            world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
                 elif event.key == K_F1:
                     world.hud.toggle_info()
                 elif event.key == K_h:
@@ -724,9 +735,10 @@ class KeyboardControl(object):
         
         # Evaluationg multiple models 
         if world._eval_mode: 
-            if self._control_type != ControlType.DRIVE_MODEL: 
-                print("ERROR: Evaluation mode expects control type DRIVE_MODEL, received " + self._control_type.name)
-                return True
+            if self._control_type != ControlType.DRIVE_MODEL:
+                pass 
+                #print("ERROR: Evaluation mode expects control type DRIVE_MODEL, received " + self._control_type.name)
+                #return True
 
             next_waypoint  = world.map.get_spawn_points()[world._eval_routes[world._eval_routes_idx][world._eval_route_idx][0]]
             
@@ -736,8 +748,8 @@ class KeyboardControl(object):
             dy = next_waypoint.location.y - loc.y
             distance = math.sqrt(dx * dx + dy * dy)
             
-            # Vehicle has reached next waypoint 
-            if distance < 3: 
+            # Vehicle has reached next waypoint or have experienced a catastrophic failure
+            if distance < 3 or world._eval_route_canceled: 
                 
                 # Get road option 
                 _, road_option = world._eval_routes[world._eval_routes_idx][world._eval_route_idx]
@@ -748,8 +760,12 @@ class KeyboardControl(object):
                 self._active_hlc = RoadOption(road_option)
                 world.hud.notification(self._active_hlc.name)
                 
-                # Check if this is the last waypoint in route 
-                if world._eval_route_idx == len(world._eval_routes[world._eval_routes_idx])-1:
+                route_complete = world._eval_route_idx == len(world._eval_routes[world._eval_routes_idx])-1
+                # Check if this is the last waypoint in route, or the route is canceled
+                if route_complete or world._eval_route_canceled:
+
+                    world.evaluator.episode_complete(route_complete)
+
                     if len(world._eval_routes)-1 == world._eval_routes_idx: 
                         # At the end of the last route  
                         world._eval_routes_idx = 0 
@@ -760,24 +776,26 @@ class KeyboardControl(object):
                             world._eval_weathers_idx = 0
                             # Check if there are available car-spawns left 
                             if world._eval_cars is None or world._eval_cars_idx == len(world._eval_cars)-1:    
-                                # If not, check for available models left 
-                                if self._current_model_idx == len(self._models)-1:
-                                    # Check if models has been tested eval_num times 
-                                    if world._eval_num_current == world._eval_num: 
-                                        # If not, exit program
+                                
+                                # Check if model has been tested eval_num times 
+                                if world._eval_num_current == world._eval_num: 
+                                    # If it has, check for available models left 
+                                    if self._current_model_idx == len(self._models)-1:
+                                        # Exit
                                         return True 
-                                    else: 
-                                        self._current_model_idx = -1 
+                                    else:
+                                        world._eval_num_current = 1
                                         self.next_model()
-                                        world._eval_num_current += 1
-
-                                else:  
-                                    self.next_model() 
+                                else: 
+                                    world._eval_num_current += 1
+               
                             else: 
                                 world._eval_cars_idx += 1 
 
                         else: 
                             world._eval_weathers_idx += 1 
+
+                        
                         world.restart() 
                         
 
@@ -789,6 +807,7 @@ class KeyboardControl(object):
                         world._eval_routes_idx += 1 
                         world.restart() 
                 else:
+
                     # Update next waypoint id
                     world._eval_route_idx += 1 
 
@@ -837,12 +856,12 @@ class KeyboardControl(object):
             distance = math.sqrt(dx * dx + dy * dy)
 
             # Change route if client AP has reached its destination
-            if distance<20:
+            """if distance<20:
                 world.hud.notification("Route Complete")
                 world.restart()
                 # Exit program if all routes are finished 
                 if world._quit_next:
-                    return True
+                    return True"""
         
         # Automatic Lane Change
         if self._lane_change_activated != None:
@@ -1308,7 +1327,7 @@ class CameraManager(object):
             carla.Transform(carla.Location(x=0, y=-0.5, z=1.8),carla.Rotation(pitch=-20, yaw=-90)),        
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
-            image, "left_center", "rgb"))
+            image, "left_center", "rgb")) 
         self._recording_sensors.append(sensor)
 
         sensor = self._parent.get_world().spawn_actor(
@@ -1554,6 +1573,303 @@ class History:
 
         self._active = False
         self._initiate()
+
+class Evaluator():
+
+    def __init__(self, hud, world):
+         self.hud = hud
+         self.sensors = []
+         self.event_logs = []
+         self.model_summary = None
+         self.last_collision = 0
+         self.last_invasion = 0
+         self.world = world
+         self.last_wp = None
+         self.current_wp = None
+         self.last_dist = None
+         self.last_dist_at = None
+         self.total_dist_traveled = None
+         self.entered_oncoming_lane_at = None
+         self.cancel_reason = None
+         self.error_counter = None
+         self.current_episode_timestamp = None
+         self.current_eval_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+
+    def new_episode(self):
+        self.last_wp = None
+        self.current_wp = self.world._eval_routes[self.world._eval_routes_idx][0][0]
+
+        self.last_dist = float('inf')
+        self.last_dist_at = None
+        self.last_collision = 0
+        self.last_invasion = 0
+        self.total_dist_traveled = 0
+        self.entered_oncoming_lane_at = None
+        self.cancel_reason = None
+        self.current_episode_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        self.event_logs.append(pd.DataFrame(columns=[
+            "Timestamp", "EventType", "ObjectName", "Instensity",
+            "Location"
+        ]))
+
+        self.error_counter = {}
+        for t in EventType:
+            self.error_counter[t.name] = 0
+
+    def initialize_model(self):
+        cols = [
+            "EvalNum", "Route", "RouteId", "WeatherId", "NumVehicles",
+            "LastWaypointReached", "DistanceCompleted", "TotalRouteDistance",
+            "CancelReason", "EventLogPath"
+        ]
+
+        for t in EventType:
+            cols.append(t.name)
+        self.model_summary = pd.DataFrame(columns=cols)
+
+    def tick(self):
+        wp = self.world._eval_routes[self.world._eval_routes_idx][self.world._eval_route_idx][0]
+        
+        if self.current_wp != wp:
+            if self.last_wp != None:
+                self.total_dist_traveled += get_distance(self.world.map.get_spawn_points()[self.current_wp].location,self.world.map.get_spawn_points()[self.last_wp].location)            
+            self.last_dist = float('inf')
+            self.last_wp = self.current_wp
+            self.current_wp = wp
+            
+        hero_transform = self.world.player.get_transform()
+        dist = get_distance(self.world.map.get_spawn_points()[wp].location, hero_transform.location)
+        hero_location = hero_transform.location
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        if self.last_dist > dist:
+            self.last_dist = dist
+            self.last_dist_at = time.time()
+        elif self.last_dist<dist-5:
+            event_type = EventType.HLC_IGNORE
+            self.error_counter[event_type.name] += 1
+            self.cancel_reason = event_type
+            self.world._eval_route_canceled = True
+            self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+            return
+        
+        if self.last_dist_at and self.last_dist_at + 120 < time.time():
+            # Model is stuck
+            event_type = EventType.STUCK
+            self.error_counter[event_type.name] += 1
+            self.cancel_reason = event_type
+            self.world._eval_route_canceled = True
+            self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+            return    
+
+        closest_wp = self.world.map.get_waypoint(self.world.player.get_location())
+        #print("Total distance traveled: ", self.total_dist_traveled, " Distance to next wp: ", dist)
+        lane_yaw = closest_wp.transform.rotation.yaw
+        hero_yaw = hero_transform.rotation.yaw
+        angle_diff = lane_yaw-hero_yaw
+        angle_diff = abs((angle_diff + 180) % 360 - 180)
+
+        if angle_diff > 45 and not closest_wp.is_junction:
+            if self.entered_oncoming_lane_at is None:
+                self.entered_oncoming_lane_at = time.time()
+            elif time.time() - self.entered_oncoming_lane_at > 5:
+                # Vehicle has entered oncoming lane without recovery, cancel route
+                event_type = EventType.ONCOMING_LANE_WITHOUT_RECOVERY
+                self.error_counter[event_type.name] += 1
+                self.cancel_reason = event_type
+                self.world._eval_route_canceled = True
+                self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+                return
+        else:
+            if self.entered_oncoming_lane_at:
+                # Vehicle has entered oncoming lane, but recovered
+                print("Recovery")
+                event_type = EventType.ONCOMING_LANE_WITH_RECOVERY
+                self.error_counter[event_type.name] += 1
+                self.entered_oncoming_lane_at = None
+                self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+
+    def episode_complete(self, route_completed):
+        eval_num = self.world._eval_num_current
+        route = [x[0] for x in self.world._eval_routes[self.world._eval_routes_idx]]
+        routeId = self.world._eval_routes_idx
+        weatherId = self.world._eval_weathers[self.world._eval_weathers_idx]
+        numberOfVehicles = self.world._eval_cars[self.world._eval_cars_idx]
+        route_dist = get_route_distance(route, self.world.map)
+
+        data = [
+                eval_num,
+                '-'.join(str(x) for x in route), 
+                routeId,
+                weatherId, 
+                numberOfVehicles,
+                self.last_wp if not route_completed else route[-1],
+                "{:.1f}".format(self.total_dist_traveled if not route_completed else route_dist),
+                "{:.1f}".format(route_dist),
+                self.cancel_reason,
+                'EventLogs/'+self.current_episode_timestamp+'.csv'
+            ]
+        for t in EventType:
+            data.append(self.error_counter[t.name])
+
+        self.model_summary = self.model_summary.append(pd.Series(data,
+            index=self.model_summary.columns),
+            ignore_index=True
+            )
+        # Write eventlog to csv
+        model_name = self.hud._drive_model_name.split('/')[-1]
+        dir_path = Path("EvalResults") / self.current_eval_timestamp / model_name / "EventLogs"
+        csv_path = dir_path / (self.current_episode_timestamp + ".csv")
+        dir_path.mkdir(parents=True, exist_ok=True)
+        self.event_logs[-1].to_csv(csv_path)
+        
+        model_summary_path = Path("EvalResults") / self.current_eval_timestamp / model_name / "summary.csv"
+        self.model_summary.to_csv(str(model_summary_path))
+       
+    def initialize_sensors(self, parent_actor):
+        weak_self = weakref.ref(self)
+        world = parent_actor.get_world()
+
+        #Lane Invasion
+        bp = world.get_blueprint_library().find('sensor.other.lane_invasion')
+        sensor = world.spawn_actor(bp, carla.Transform(), attach_to=parent_actor)
+        sensor.listen(lambda event: Evaluator._on_lane_invasion(weak_self, event))        
+        self.sensors.append(sensor)
+        
+        #Collision
+        bp = world.get_blueprint_library().find('sensor.other.collision')
+        sensor = world.spawn_actor(bp, carla.Transform(), attach_to=parent_actor)
+        sensor.listen(lambda event: Evaluator._on_collision(weak_self, event))
+        self.sensors.append(sensor)
+
+    @staticmethod
+    def _on_lane_invasion(weak_self, event):
+        self = weak_self()
+        if not self:
+            return
+        if(time.time() - self.last_invasion < 2):
+            self.last_invasion = time.time()
+            return
+        lane_type = (str(event.crossed_lane_markings[-1].type)).lower()
+        location = event.actor.get_transform().location
+        event_type = EventType.SIDEWALK_TOUCH if lane_type == 'none' else EventType.LANE_TOUCH 
+        self.error_counter[event_type.name] += 1
+
+        lane_types = set(x.type for x in event.crossed_lane_markings)
+        text = ['%r' % str(x).split()[-1] for x in lane_types]
+        self.hud.notification('Crossed line %s' % ' and '.join(text))
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        self.event_logs[-1] = self.event_logs[-1].append(
+            pd.Series([
+                timestamp,
+                event_type, 
+                lane_type,
+                None,
+                (location.x, location.y)
+            ],
+            index=self.event_logs[-1].columns),
+            ignore_index=True)
+        self.last_invasion = time.time()
+
+    @staticmethod
+    def _on_collision(weak_self, event):
+        self = weak_self()
+        if not self:
+            return
+        
+        if(time.time() - self.last_collision < 3):
+            self.last_collision = time.time()
+            return
+
+        actor_type = get_actor_display_name(event.other_actor)
+        event_type = None
+        location = event.actor.get_transform().location
+        impulse = event.normal_impulse
+        intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+
+        if 'vehicle' in event.other_actor.type_id:
+            other_actor_yaw = event.other_actor.get_transform().rotation.yaw
+            hero_yaw = event.actor.get_transform().rotation.yaw
+            angle_diff = other_actor_yaw-hero_yaw
+            
+            if abs((angle_diff + 180) % 360 - 180) <= 90:
+                event_type = EventType.REAR_END_VEHICLE_COLLISION
+            else:
+                # Front end collision - canceling route
+                event_type = EventType.FRONT_END_VEHICLE_COLLISION
+                self.cancel_reason = event_type
+                self.world._eval_route_canceled = True
+                self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        actor_type,
+                        intensity,
+                        (location.x, location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+                self.error_counter[event_type.name] += 1
+                return
+        else:
+            event_type = EventType.OBJECT_COLLISION
+
+        self.error_counter[event_type.name] += 1
+        self.hud.notification(event_type.name+' with %r, intensity %f' % (actor_type, intensity))
+        
+        self.event_logs[-1] = self.event_logs[-1].append(
+            pd.Series([
+                timestamp,
+                event_type, 
+                actor_type,
+                intensity,
+                (location.x, location.y)
+            ],
+            index=self.event_logs[-1].columns),
+            ignore_index=True)
+        self.last_collision = time.time()
+
+    def destroy_sensors(self):
+        for sensor in self.sensors:
+            sensor.destroy()
+        self.sensors = []
+
 
 # ==============================================================================
 # -- game_loop() ---------------------------------------------------------------
