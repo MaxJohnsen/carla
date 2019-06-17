@@ -1313,7 +1313,7 @@ class CameraManager(object):
 
         sensor = self._parent.get_world().spawn_actor(
             sensor_bp,
-            carla.Transform(carla.Location(x=0, y=0.5, z=1.8),carla.Rotation(pitch=-20, yaw=-90)),        
+            carla.Transform(carla.Location(x=0, y=0.5, z=1.8),carla.Rotation(pitch=-20, yaw=90)),        
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
             image, "right_center", "rgb"))
