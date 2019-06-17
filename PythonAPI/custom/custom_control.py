@@ -632,9 +632,12 @@ class KeyboardControl(object):
                 if self._is_quit_shortcut(event.key):
                     return True
                 elif event.key == K_BACKSPACE:
-                    world.restart()
-                    if self._control_type == ControlType.SERVER_AP:
-                        world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
+                    if world._eval_mode:
+                        world.hud.notification('Cannot restart in eval mode')
+                    else:
+                        world.restart()
+                        if self._control_type == ControlType.SERVER_AP:
+                            world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
                 elif event.key == K_F1:
                     world.hud.toggle_info()
                 elif event.key == K_h:
@@ -1598,8 +1601,9 @@ class Evaluator():
          self.current_eval_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
 
     def new_episode(self):
-        self.last_wp = self.world._eval_routes[self.world._eval_routes_idx][0][0]
-        self.current_wp = self.world._eval_routes[self.world._eval_routes_idx][1][0]
+        self.last_wp = None
+        self.current_wp = self.world._eval_routes[self.world._eval_routes_idx][0][0]
+
         self.last_dist = float('inf')
         self.last_dist_at = None
         self.last_collision = 0
@@ -1609,7 +1613,7 @@ class Evaluator():
         self.cancel_reason = None
         self.current_episode_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
         self.event_logs.append(pd.DataFrame(columns=[
-            "EventType", "ObjectName", "Instensity",
+            "Timestamp", "EventType", "ObjectName", "Instensity",
             "Location"
         ]))
 
@@ -1630,8 +1634,10 @@ class Evaluator():
 
     def tick(self):
         wp = self.world._eval_routes[self.world._eval_routes_idx][self.world._eval_route_idx][0]
+        
         if self.current_wp != wp:
-            self.total_dist_traveled += get_distance(self.world.map.get_spawn_points()[self.current_wp].location,self.world.map.get_spawn_points()[self.last_wp].location)
+            if self.last_wp != None:
+                self.total_dist_traveled += get_distance(self.world.map.get_spawn_points()[self.current_wp].location,self.world.map.get_spawn_points()[self.last_wp].location)            
             self.last_dist = float('inf')
             self.last_wp = self.current_wp
             self.current_wp = wp
@@ -1639,6 +1645,7 @@ class Evaluator():
         hero_transform = self.world.player.get_transform()
         dist = get_distance(self.world.map.get_spawn_points()[wp].location, hero_transform.location)
         hero_location = hero_transform.location
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
         if self.last_dist > dist:
             self.last_dist = dist
             self.last_dist_at = time.time()
@@ -1649,6 +1656,7 @@ class Evaluator():
             self.world._eval_route_canceled = True
             self.event_logs[-1] = self.event_logs[-1].append(
                     pd.Series([
+                        timestamp,
                         event_type, 
                         None,
                         None,
@@ -1666,6 +1674,7 @@ class Evaluator():
             self.world._eval_route_canceled = True
             self.event_logs[-1] = self.event_logs[-1].append(
                     pd.Series([
+                        timestamp,
                         event_type, 
                         None,
                         None,
@@ -1693,6 +1702,7 @@ class Evaluator():
                 self.world._eval_route_canceled = True
                 self.event_logs[-1] = self.event_logs[-1].append(
                     pd.Series([
+                        timestamp,
                         event_type, 
                         None,
                         None,
@@ -1710,6 +1720,7 @@ class Evaluator():
                 self.entered_oncoming_lane_at = None
                 self.event_logs[-1] = self.event_logs[-1].append(
                     pd.Series([
+                        timestamp,
                         event_type, 
                         None,
                         None,
@@ -1728,13 +1739,13 @@ class Evaluator():
 
         data = [
                 eval_num,
-                ' '.join(str(x) for x in route), 
+                '-'.join(str(x) for x in route), 
                 routeId,
                 weatherId, 
                 numberOfVehicles,
-                self.last_wp,
-                self.total_dist_traveled if not route_completed else route_dist,
-                route_dist,
+                self.last_wp if not route_completed else route[-1],
+                "{:.1f}".format(self.total_dist_traveled if not route_completed else route_dist),
+                "{:.1f}".format(route_dist),
                 self.cancel_reason,
                 'EventLogs/'+self.current_episode_timestamp+'.csv'
             ]
@@ -1776,7 +1787,7 @@ class Evaluator():
         self = weak_self()
         if not self:
             return
-        if(time.time() - self.last_invasion < 3):
+        if(time.time() - self.last_invasion < 2):
             self.last_invasion = time.time()
             return
         lane_type = (str(event.crossed_lane_markings[-1].type)).lower()
@@ -1787,9 +1798,10 @@ class Evaluator():
         lane_types = set(x.type for x in event.crossed_lane_markings)
         text = ['%r' % str(x).split()[-1] for x in lane_types]
         self.hud.notification('Crossed line %s' % ' and '.join(text))
-        print('append')
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
         self.event_logs[-1] = self.event_logs[-1].append(
             pd.Series([
+                timestamp,
                 event_type, 
                 lane_type,
                 None,
@@ -1812,7 +1824,10 @@ class Evaluator():
         actor_type = get_actor_display_name(event.other_actor)
         event_type = None
         location = event.actor.get_transform().location
-        
+        impulse = event.normal_impulse
+        intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+
         if 'vehicle' in event.other_actor.type_id:
             other_actor_yaw = event.other_actor.get_transform().rotation.yaw
             hero_yaw = event.actor.get_transform().rotation.yaw
@@ -1821,18 +1836,31 @@ class Evaluator():
             if abs((angle_diff + 180) % 360 - 180) <= 90:
                 event_type = EventType.REAR_END_VEHICLE_COLLISION
             else:
+                # Front end collision - canceling route
                 event_type = EventType.FRONT_END_VEHICLE_COLLISION
+                self.cancel_reason = event_type
+                self.world._eval_route_canceled = True
+                self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        actor_type,
+                        intensity,
+                        (location.x, location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+                self.error_counter[event_type.name] += 1
+                return
         else:
             event_type = EventType.OBJECT_COLLISION
 
         self.error_counter[event_type.name] += 1
-
-        impulse = event.normal_impulse
-        intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
         self.hud.notification(event_type.name+' with %r, intensity %f' % (actor_type, intensity))
         
         self.event_logs[-1] = self.event_logs[-1].append(
             pd.Series([
+                timestamp,
                 event_type, 
                 actor_type,
                 intensity,
