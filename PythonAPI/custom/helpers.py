@@ -5,7 +5,7 @@ import carla
 from configparser import ConfigParser
 
 from agents.tools.enums import RoadOption
-from agents.tools.misc import distance_vehicle
+from agents.tools.misc import distance_vehicle, get_distance
 
 def set_green_traffic_light(player):
 
@@ -126,3 +126,21 @@ def is_valid_lane_change(road_option, world, proximity_threshold=8):
                         if distance_vehicle(vehicle_waypoint, player_transform) < proximity_threshold:   
                             return False           
         return True            
+
+def get_route_distance(waypoint_index_list, current_map):
+    """
+    Calculates the total distance of a given route.
+    Input: 
+        waypoint_index_list: A list of waypoint indexes
+        map: Current map
+    Output: Total distance
+    """
+
+    total_distance = 0
+
+    for i in range(len(waypoint_index_list)-1):
+        wp1 = waypoint_index_list[i]
+        wp2 = waypoint_index_list[i+1]
+        total_distance += get_distance(current_map.get_spawn_points()[wp1].location, current_map.get_spawn_points()[wp2].location)
+
+    return total_distance
