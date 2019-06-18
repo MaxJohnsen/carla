@@ -177,21 +177,33 @@ class Agent(object):
             target_vehicle_yaw = target_vehicle.get_transform().rotation.yaw
 
             angle_diff = ego_vehicle_yaw-target_vehicle_yaw
-            
-            if abs((angle_diff + 180) % 360 - 180) >= 100:
+            angle_diff = abs((angle_diff + 180) % 360 - 180)
+            if angle_diff >= 100:
                 continue
 
             target_vehicle_waypoint = self._map.get_waypoint(target_vehicle.get_location())
 
+
+
             loc = target_vehicle.get_location()
 
-            distance = get_distance_ahead(loc, ego_vehicle_location,
+            vector_angle, distance = get_distance_ahead(loc, ego_vehicle_location,
                                 self._vehicle.get_transform().rotation.yaw,
                                 proximity_threshold)
-            if distance != False:
-                if closest_distance>distance:
-                    closest_distance=distance
-                    closest_vehicle = target_vehicle
+            if not distance:
+                continue
+
+            if target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id:
+                if vector_angle < 1 and angle_diff<1.5:
+                    print(vector_angle, angle_diff)
+                else:
+                    continue 
+            elif target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id and vector_angle<1:
+                print(vector_angle)
+
+            if closest_distance>distance:
+                closest_distance=distance
+                closest_vehicle = target_vehicle
         
         return (closest_vehicle, closest_distance)
 
@@ -213,7 +225,7 @@ class Agent(object):
                  - vehicle is the blocker object itself
         """
 
-        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, max(10,get_speed(self._vehicle)/1.75))
+        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, max(10,get_speed(self._vehicle)/2.3))
 
         if(vehicle != None):
             return (True, vehicle)
@@ -236,7 +248,7 @@ class Agent(object):
                    and False otherwise
                  - vehicle is the blocker object itself
         """
-        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, max(10*1.17,get_speed(self._vehicle)/1.75)*1.2)
+        vehicle, distance = self.get_closest_vehicle_ahead(vehicle_list, max(10*1.17,get_speed(self._vehicle)/2.3)*1.2)
 
         if(vehicle != None):
             return (True, vehicle)

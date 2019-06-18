@@ -87,14 +87,14 @@ def get_distance_ahead(target_location, current_location, orientation, max_dista
     
     if norm_target > max_distance:
 
-        return False
+        return False, False
 
     forward_vector = np.array(
         [math.cos(math.radians(orientation)), math.sin(math.radians(orientation))])
     d_angle = math.degrees(math.acos(np.dot(forward_vector, target_vector) / norm_target))
     if d_angle < 100:
-        return norm_target
-    return False
+        return d_angle, norm_target
+    return False, False
 
 
 def compute_magnitude_angle(target_location, current_location, orientation):
