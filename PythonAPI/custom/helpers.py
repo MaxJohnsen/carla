@@ -2,10 +2,13 @@ from glob import glob
 from pathlib import Path
 import re 
 import carla
+import numpy as np
+import math
 from configparser import ConfigParser
 
 from agents.tools.enums import RoadOption
 from agents.tools.misc import distance_vehicle, get_distance
+
 
 def set_green_traffic_light(player):
 
@@ -76,7 +79,7 @@ def get_parameter_text(path):
     return params
     
 
-def is_valid_lane_change(road_option, world, proximity_threshold=8): 
+def is_valid_lane_change(road_option, world, proximity_threshold=5.9): 
 
         if road_option != RoadOption.CHANGELANELEFT and road_option != RoadOption.CHANGELANERIGHT: 
             print("ERROR: road option is not a lane change")

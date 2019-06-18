@@ -97,6 +97,7 @@ def get_distance_ahead(target_location, current_location, orientation, max_dista
     return False, False
 
 
+
 def compute_magnitude_angle(target_location, current_location, orientation):
     """
     Compute relative angle and distance between a target_location and a current_location

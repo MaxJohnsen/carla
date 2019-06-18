@@ -512,6 +512,7 @@ class KeyboardControl(object):
         self._models = models
         self._drive_model = None 
         self._current_model_idx = None   
+        
 
         # Settings 
         self._steering_wheel_enabled = use_steering_wheel
@@ -539,6 +540,7 @@ class KeyboardControl(object):
         self._control = carla.VehicleControl()
         self._world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
         self._steer_cache = 0.0
+
 
          # initialize steering wheel
         if self._steering_wheel_enabled:
@@ -607,6 +609,7 @@ class KeyboardControl(object):
         
 
     def parse_events(self, client, world, clock):
+
         if not self._red_lights_allowed: 
             set_green_traffic_light(world.player)
         for event in pygame.event.get():
@@ -815,6 +818,13 @@ class KeyboardControl(object):
         if self._control_type == ControlType.SERVER_AP: 
             world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
 
+            # Update lane check 
+            is_left = is_valid_lane_change(RoadOption.CHANGELANELEFT, world)
+            world.history.update_left_lane_change_valid(is_left)
+
+            is_right = is_valid_lane_change(RoadOption.CHANGELANERIGHT, world)
+            world.history.update_right_lane_change_valid(is_right)
+
             # If RouteRecording is activated  
             if world._routes is not None:
                 # Exit game if no more routes are available  
@@ -826,6 +836,14 @@ class KeyboardControl(object):
 
         # Manual Driving 
         elif self._control_type == ControlType.MANUAL:
+
+            # Update lane check 
+            is_left = is_valid_lane_change(RoadOption.CHANGELANELEFT, world)
+            world.history.update_left_lane_change_valid(is_left)
+
+            is_right = is_valid_lane_change(RoadOption.CHANGELANERIGHT, world)
+            world.history.update_right_lane_change_valid(is_right)
+
             # Steering wheel activated 
             if self._steering_wheel_enabled: 
                 self._parse_vehicle_wheel()
@@ -842,6 +860,13 @@ class KeyboardControl(object):
         elif self._control_type == ControlType.CLIENT_AP:
             # Update HLC to current RoadOption 
             world.history.update_hlc(world._client_ap._local_planner._target_road_option)
+
+            # Update lane check 
+            is_left = is_valid_lane_change(RoadOption.CHANGELANELEFT, world)
+            world.history.update_left_lane_change_valid(is_left)
+
+            is_right = is_valid_lane_change(RoadOption.CHANGELANERIGHT, world)
+            world.history.update_right_lane_change_valid(is_right)
             
             # Set target speed to current speed limit - 10 km/h 
             world._client_ap.set_target_speed(world.player.get_speed_limit()-10)
@@ -856,12 +881,12 @@ class KeyboardControl(object):
             distance = math.sqrt(dx * dx + dy * dy)
 
             # Change route if client AP has reached its destination
-            """if distance<20:
+            if distance<20:
                 world.hud.notification("Route Complete")
                 world.restart()
                 # Exit program if all routes are finished 
                 if world._quit_next:
-                    return True"""
+                    return True
         
         # Automatic Lane Change
         if self._lane_change_activated != None:
@@ -1453,6 +1478,8 @@ class History:
         self.control_type = None
         self._latest_hlc = None
         self._environment = environment
+        self._left_lane_change_valid = None 
+        self._right_lane_change_valid = None 
 
         self._weather_index = 0
 
@@ -1463,7 +1490,7 @@ class History:
         
         self._driving_log = pd.DataFrame(columns=[
             "ForwardCenter", "ForwardLeft", "ForwardRight", "LeftCenter",
-            "RightCenter", "Location", "Velocity", "Controls", "ClientAutopilotControls","ControlType","TrafficLight",
+            "RightCenter", "Location", "Velocity", "Controls", "ClientAutopilotControls","ControlType","LeftLaneChangeValid","RightLaneChangeValid","TrafficLight",
             "SpeedLimit", "HLC", "Environment", "WheaterId"
         ])
         self._timestamp = time.strftime("%Y-%m-%d_%H-%M-%S",
@@ -1484,6 +1511,12 @@ class History:
             img = np.reshape(np.array(image.raw_data), (160, 350, 4))[:, :, :3]
             self._latest_images[position + "_" + sensor_type] = img
 
+    def update_left_lane_change_valid(self, is_valid): 
+        self._left_lane_change_valid = is_valid
+
+    def update_right_lane_change_valid(self, is_valid): 
+        self._right_lane_change_valid = is_valid
+    
     def update_image_hq(self, image, position, sensor_type):
         if image.raw_data:
             img = np.reshape(np.array(image.raw_data), (1080, 1920, 4))[:, :, :3]
@@ -1545,6 +1578,8 @@ class History:
                 (c.throttle, c.steer, c.brake), 
                 (client_ap_c.throttle, client_ap_c.steer, client_ap_c.brake) if self.control_type==ControlType.CLIENT_AP else -1, 
                 self.control_type.value,
+                1 if self._left_lane_change_valid else 0,
+                1 if self._right_lane_change_valid else 0,
                 red_light,
                 player.get_speed_limit() / 3.6, 
                 hlc.value, 

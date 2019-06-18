@@ -195,11 +195,12 @@ class Agent(object):
 
             if target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id:
                 if vector_angle < 1 and angle_diff<1.5:
-                    print(vector_angle, angle_diff)
+                    #print(vector_angle, angle_diff)
+                    pass
                 else:
                     continue 
-            elif target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id and vector_angle<1:
-                print(vector_angle)
+            #elif target_vehicle_waypoint.lane_id != ego_vehicle_waypoint.lane_id and vector_angle<1:
+            #    print(vector_angle)
 
             if closest_distance>distance:
                 closest_distance=distance
