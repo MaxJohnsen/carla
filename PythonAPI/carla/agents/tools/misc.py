@@ -114,6 +114,11 @@ def compute_magnitude_angle(target_location, current_location, orientation):
 
     return (norm_target, d_angle)
 
+def get_distance(loc1, loc2):
+    dx = loc1.x - loc2.x
+    dy = loc1.y - loc2.y
+
+    return math.sqrt(dx * dx + dy * dy)
 
 def distance_vehicle(waypoint, vehicle_transform):
     loc = vehicle_transform.location
