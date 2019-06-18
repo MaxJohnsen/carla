@@ -319,7 +319,7 @@ class World(object):
             eval_weathers = eval_weathers.split()
             eval_weathers = [ast.literal_eval(w) for w in eval_weathers][0]
             self._eval_weathers = eval_weathers
-            self._eval_weathers_idx = eval_weathers[0]
+            self._eval_weathers_idx = 0
         
 
     def restart(self):
@@ -353,8 +353,7 @@ class World(object):
                     self._eval_cars[self._eval_cars_idx], 
                     self._eval_cars[self._eval_cars_idx], 
                     self._spawning_radius) 
-            if self._eval_weathers is not None: 
-                self.set_weather(self._eval_weathers_idx)
+
         # Choose starting spawnpoint in recording routes 
         elif self._new_spawn_point is None: 
             if self._routes is not None:
@@ -397,6 +396,8 @@ class World(object):
         if self._eval_mode is not None and self._eval_mode != False:
             self.evaluator.initialize_sensors(self.player)
             self.evaluator.new_episode()
+            if self._eval_weathers is not None: 
+                self.set_weather(self._eval_weathers[self._eval_weathers_idx])
         
         # Turn on recording at new route 
         if self._auto_record: 
@@ -471,7 +472,7 @@ class World(object):
         self.hud.tick(self, clock)
         self.camera_manager.tick()
 
-        if self.evaluator:
+        if self._eval_mode:
             self.evaluator.tick()
 
     def render(self, display):
@@ -750,7 +751,6 @@ class KeyboardControl(object):
             
             # Vehicle has reached next waypoint or have experienced a catastrophic failure
             if distance < 3 or world._eval_route_canceled: 
-                
                 # Get road option 
                 _, road_option = world._eval_routes[world._eval_routes_idx][world._eval_route_idx]
                 
@@ -1593,6 +1593,7 @@ class Evaluator():
          self.cancel_reason = None
          self.error_counter = None
          self.current_episode_timestamp = None
+         self.current_episode_time = None
          self.current_eval_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
 
     def new_episode(self):
@@ -1606,6 +1607,7 @@ class Evaluator():
         self.total_dist_traveled = 0
         self.entered_oncoming_lane_at = None
         self.cancel_reason = None
+        self.current_episode_time = time.time()
         self.current_episode_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
         self.event_logs.append(pd.DataFrame(columns=[
             "Timestamp", "EventType", "ObjectName", "Instensity",
@@ -1620,7 +1622,7 @@ class Evaluator():
         cols = [
             "EvalNum", "Route", "RouteId", "WeatherId", "NumVehicles",
             "LastWaypointReached", "DistanceCompleted", "TotalRouteDistance",
-            "CancelReason", "EventLogPath"
+            "CancelReason", "EventLogPath", "StartedAt", "EndedAt"
         ]
 
         for t in EventType:
@@ -1742,7 +1744,9 @@ class Evaluator():
                 "{:.1f}".format(self.total_dist_traveled if not route_completed else route_dist),
                 "{:.1f}".format(route_dist),
                 self.cancel_reason,
-                'EventLogs/'+self.current_episode_timestamp+'.csv'
+                'EventLogs/'+self.current_episode_timestamp+'.csv',
+                self.current_episode_time,
+                time.time()
             ]
         for t in EventType:
             data.append(self.error_counter[t.name])
