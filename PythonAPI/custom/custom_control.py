@@ -753,7 +753,7 @@ class KeyboardControl(object):
             distance = math.sqrt(dx * dx + dy * dy)
             
             # Vehicle has reached next waypoint or have experienced a catastrophic failure
-            if distance < 3 or world._eval_route_canceled: 
+            if distance < 4 or world._eval_route_canceled: 
                 # Get road option 
                 _, road_option = world._eval_routes[world._eval_routes_idx][world._eval_route_idx]
                 
