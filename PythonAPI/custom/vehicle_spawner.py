@@ -33,6 +33,16 @@ class VehicleSpawner(object):
         self.spawn_points = self.world.get_map().get_spawn_points()
         self.blueprints = self.world.get_blueprint_library().filter("vehicle.*")
         self._spawned_vehicles = []
+        self._bad_colors = [
+            "255,255,255", "183,187,162", "237,237,237", 
+            "134,134,134", "243,243,243", "127,130,135", 
+            "109,109,109", "181,181,181", "140,140,140", 
+            "181,178,124", "171,255,0", "251,241,176",
+            "158,149,129", "233,216,168", "233,216,168",
+            "108,109,126", "193,193,193", "227,227,227",
+            "151,150,125", "206,206,206", "255,222,218",
+            "211,211,211", "191,191,191"
+            ]
 
     
     def spawn_nearby(self, hero_spawn_point_index, number_of_vehicles_min,number_of_vehicles_max, radius):
@@ -49,6 +59,8 @@ class VehicleSpawner(object):
         self.blueprints = [x for x in self.blueprints if not x.id.endswith('isetta')]
         self.blueprints = [x for x in self.blueprints if not x.id.endswith('carlacola')]
         self.blueprints = [x for x in self.blueprints if not x.id.endswith('t2')]
+        self.blueprints = [x for x in self.blueprints if not x.id.endswith('coupe')]
+
 
         valid_spawn_points = []
         for spawn_point in self.spawn_points:
@@ -92,7 +104,10 @@ class VehicleSpawner(object):
                 break
             blueprint = random.choice(self.blueprints)
             if blueprint.has_attribute('color'):
-                color = random.choice(blueprint.get_attribute('color').recommended_values)
+
+                color = "255,255,255"
+                while color in self._bad_colors: 
+                    color = random.choice(blueprint.get_attribute('color').recommended_values)
                 blueprint.set_attribute('color', color)
             blueprint.set_attribute('role_name', 'autopilot')
             batch.append(SpawnActor(blueprint, transform).then(SetAutopilot(FutureActor, True)))
