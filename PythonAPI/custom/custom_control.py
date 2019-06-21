@@ -388,7 +388,7 @@ class World(object):
         
         # Set up the sensors.
         self.camera_manager = CameraManager(self.player, self._client_ap, self.hud,
-                                            self.history, self._hq_recording)
+                                            self.history, self._eval_mode, self._hq_recording)
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
@@ -413,6 +413,7 @@ class World(object):
             self.next_weather(weather_type=self._weather_type)
 
         self.hud._episode_start_time = self.hud.simulation_time
+
 
     def set_weather(self, weather_idx): 
         """ Set weather to given id"""
@@ -609,8 +610,7 @@ class KeyboardControl(object):
         
 
     def parse_events(self, client, world, clock):
-
-        if not self._red_lights_allowed: 
+        if not self._red_lights_allowed and world._eval_cars[world._eval_cars_idx] == 0: 
             set_green_traffic_light(world.player)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -637,7 +637,7 @@ class KeyboardControl(object):
                     return True
                 elif event.key == K_BACKSPACE:
                     if world._eval_mode:
-                        world.hud.notification('Cannot restart in eval mode')
+                        world._eval_route_canceled = True
                     else:
                         world.restart()
                         if self._control_type == ControlType.SERVER_AP:
@@ -757,6 +757,7 @@ class KeyboardControl(object):
                 # Get road option 
                 _, road_option = world._eval_routes[world._eval_routes_idx][world._eval_route_idx]
                 
+
                 world.hud.notification(RoadOption(road_option).name)
                 # Update HLC
                 world.history.update_hlc(RoadOption(road_option))
@@ -766,7 +767,7 @@ class KeyboardControl(object):
                 route_complete = world._eval_route_idx == len(world._eval_routes[world._eval_routes_idx])-1
                 # Check if this is the last waypoint in route, or the route is canceled
                 if route_complete or world._eval_route_canceled:
-
+                    self._drive_model.restart()
                     world.evaluator.episode_complete(route_complete)
 
                     if len(world._eval_routes)-1 == world._eval_routes_idx: 
@@ -779,7 +780,7 @@ class KeyboardControl(object):
                             world._eval_weathers_idx = 0
                             # Check if there are available car-spawns left 
                             if world._eval_cars is None or world._eval_cars_idx == len(world._eval_cars)-1:    
-                                
+                                world._eval_cars_idx = 0
                                 # Check if model has been tested eval_num times 
                                 if world._eval_num_current == world._eval_num: 
                                     # If it has, check for available models left 
@@ -950,10 +951,10 @@ class KeyboardControl(object):
 
         images["forward_center_rgb"] = world.history._latest_images[
             "forward_center_rgb"]
-        images["left_center_rgb"] = world.history._latest_images[
+        """images["left_center_rgb"] = world.history._latest_images[
             "left_center_rgb"]
         images["right_center_rgb"] = world.history._latest_images[
-            "right_center_rgb"]
+            "right_center_rgb"]"""
 
         player = world.player
 
@@ -1268,7 +1269,7 @@ class HelpText(object):
 
 
 class CameraManager(object):
-    def __init__(self, parent_actor, client_ap, hud, history, hq_recording=False):
+    def __init__(self, parent_actor, client_ap, hud, history, eval=False, hq_recording=False):
         self.sensor = None
         self._surface = None
         self._parent = parent_actor
@@ -1284,6 +1285,7 @@ class CameraManager(object):
             carla.Transform(carla.Location(x=0.5, z=2.3), carla.Rotation(pitch=-5)),
         ]
         self._transform_index = 1
+        self.eval = eval
         self._sensors = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
             ['sensor.camera.depth', cc.Raw, 'Camera Depth (Raw)'],
@@ -1330,38 +1332,38 @@ class CameraManager(object):
         sensor.listen(lambda image: self._history.update_image(
             image, "forward_center", "rgb"))
         self._recording_sensors.append(sensor)
+        if not self.eval:
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0.5, y=-0.7, z=2.3), carla.Rotation(pitch=-5)),
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "forward_left", "rgb"))
+            self._recording_sensors.append(sensor)
 
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(carla.Location(x=0.5, y=-0.7, z=2.3), carla.Rotation(pitch=-5)),
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "forward_left", "rgb"))
-        self._recording_sensors.append(sensor)
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0.5, y=0.7, z=2.3), carla.Rotation(pitch=-5)),
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "forward_right", "rgb"))
+            self._recording_sensors.append(sensor)
 
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(carla.Location(x=0.5, y=0.7, z=2.3), carla.Rotation(pitch=-5)),
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "forward_right", "rgb"))
-        self._recording_sensors.append(sensor)
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0, y=-0.5, z=1.8),carla.Rotation(pitch=-20, yaw=-90)),        
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "left_center", "rgb")) 
+            self._recording_sensors.append(sensor)
 
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(carla.Location(x=0, y=-0.5, z=1.8),carla.Rotation(pitch=-20, yaw=-90)),        
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "left_center", "rgb")) 
-        self._recording_sensors.append(sensor)
-
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(carla.Location(x=0, y=0.5, z=1.8),carla.Rotation(pitch=-20, yaw=90)),        
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "right_center", "rgb"))
-        self._recording_sensors.append(sensor)
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0, y=0.5, z=1.8),carla.Rotation(pitch=-20, yaw=90)),        
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "right_center", "rgb"))
+            self._recording_sensors.append(sensor)
 
         if self._hq_recording:
             sensor_bp = self._parent.get_world().get_blueprint_library().find(
@@ -1791,7 +1793,7 @@ class Evaluator():
             ignore_index=True
             )
         # Write eventlog to csv
-        model_name = self.hud._drive_model_name.split('/')[-1]
+        model_name = '_'.join(self.hud._drive_model_name.split('/'))
         dir_path = Path("EvalResults") / self.current_eval_timestamp / model_name / "EventLogs"
         csv_path = dir_path / (self.current_episode_timestamp + ".csv")
         dir_path.mkdir(parents=True, exist_ok=True)

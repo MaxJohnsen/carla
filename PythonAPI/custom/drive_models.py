@@ -7,6 +7,7 @@ import tensorflow as tf
 from tensorflow.keras.backend import set_session
 import tensorflow.keras.losses
 import re
+import time
 from scipy.optimize import curve_fit
 
 class ModelInterface(ABC):
@@ -44,6 +45,9 @@ class LSTMKeras(ModelInterface):
         self.hlc_one_hot = { 1: [1,0,0,0,0,0], 2:[0,1,0,0,0,0], 3:[0,0,1,0,0,0], 4:[0,0,0,1,0,0], 5:[0,0,0,0,1,0], 6:[0,0,0,0,0,1]}
         self.environment_one_hot = { 0: [1,0], 1:[0,1]}
 
+        self.loaded_at = time.time()
+        self.brake_hist = []
+
         # Load model
         self._load_model(path)
         
@@ -59,6 +63,16 @@ class LSTMKeras(ModelInterface):
     def _load_model(self, path):
         self._model = tf.keras.models.load_model(path, compile=False)
 
+        
+    def restart(self):
+        self._img_center_history = []
+        self._img_left_history = []
+        self._img_right_history = []
+        self._info_history = [] 
+        self._hlc_history = []
+        self._environment_history = []
+        self.loaded_at = time.time()
+        print("Restart")
 
     def get_prediction(self, images, info):
         if self._model is None:
@@ -66,34 +80,37 @@ class LSTMKeras(ModelInterface):
         req = (self._seq_length - 1) * (self._sampling_interval + 1) + 1
 
         img_center = cv2.cvtColor(images["forward_center_rgb"], cv2.COLOR_BGR2LAB)
-        img_left = cv2.cvtColor(images["left_center_rgb"], cv2.COLOR_BGR2LAB)
-        img_right = cv2.cvtColor(images["right_center_rgb"], cv2.COLOR_BGR2LAB)
+        """img_left = cv2.cvtColor(images["left_center_rgb"], cv2.COLOR_BGR2LAB)
+        img_right = cv2.cvtColor(images["right_center_rgb"], cv2.COLOR_BGR2LAB)"""
         info_input = [
-            float(info["speed"] * 3.6 / 100),
+            max(float(info["speed"] * 3.6 / 100),0.2),
             float(info["speed_limit"] * 3.6 / 100),
-            int(info["traffic_light"])
+            info["traffic_light"]
         ]
         hlc_input = self.hlc_one_hot[(info["hlc"].value)]
         environment_input = self.environment_one_hot[(info["environment"].value)]
 
         self._img_center_history.append(np.array(img_center))
-        self._img_left_history.append(np.array(img_left))
-        self._img_right_history.append(np.array(img_right))
+        """self._img_left_history.append(np.array(img_left))
+        self._img_right_history.append(np.array(img_right))"""
         self._info_history.append(np.array(info_input))
         self._hlc_history.append(np.array(hlc_input))
         self._environment_history.append(np.array(environment_input))
+
+        sinus = True
+        
         if len(self._img_center_history) > req:
             self._img_center_history.pop(0)
-            self._img_left_history.pop(0)
-            self._img_right_history.pop(0)
+            """self._img_left_history.pop(0)
+            self._img_right_history.pop(0)"""
             self._info_history.pop(0)
             self._hlc_history.pop(0)
             self._environment_history.pop(0)
                 
         if len(self._img_center_history) == req:
             imgs_center = np.array([self._img_center_history[0::self._sampling_interval + 1]])
-            imgs_left = np.array([self._img_left_history[0::self._sampling_interval + 1]])
-            imgs_right = np.array([self._img_right_history[0::self._sampling_interval + 1]])
+            """imgs_left = np.array([self._img_left_history[0::self._sampling_interval + 1]])
+            imgs_right = np.array([self._img_right_history[0::self._sampling_interval + 1]])"""
 
             infos = np.array([self._info_history[0::self._sampling_interval + 1]])
             hlcs = np.array([self._hlc_history[0::self._sampling_interval + 1]])
@@ -116,11 +133,14 @@ class LSTMKeras(ModelInterface):
 
             # print(brake)
             steer, throttle, brake = prediction[0][0], prediction[1][0], prediction[2][0]
-           
-            
-            steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
-            steer_angle = steer_curve_parameters[0]
-            step_brake = 1 if brake > 0.5 else 0
-            print(brake)
-            return (steer_angle, throttle, step_brake)
-        return (0, 1.0, 0)
+            self.brake_hist.append(brake)
+            if len(self.brake_hist)>5:
+                self.brake_hist.pop(0)
+            if sinus:
+                steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
+                steer_angle = steer_curve_parameters[0]
+
+            avg_brake = np.max(self.brake_hist)
+            step_brake = 1 if avg_brake > 0.5 else 0
+            return (steer_angle, throttle, step_brake) if sinus else (steer, throttle, step_brake) 
+        return (0, 0.5, 0)
