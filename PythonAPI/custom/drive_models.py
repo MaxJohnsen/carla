@@ -50,7 +50,10 @@ class LSTMKeras(ModelInterface):
 
         # Load model
         self._load_model(path)
+
+        self._frame = 0
         
+        self._last_pred = None
 
     def _init_history(self):
         self._img_center_history = []
@@ -72,9 +75,14 @@ class LSTMKeras(ModelInterface):
         self._hlc_history = []
         self._environment_history = []
         self.loaded_at = time.time()
+        self._frame = 0
+        self._last_pred = None
         print("Restart")
 
     def get_prediction(self, images, info):
+  
+        self._frame += 1
+        
         if self._model is None:
             return False
         req = (self._seq_length - 1) * (self._sampling_interval + 1) + 1
@@ -83,7 +91,7 @@ class LSTMKeras(ModelInterface):
         """img_left = cv2.cvtColor(images["left_center_rgb"], cv2.COLOR_BGR2LAB)
         img_right = cv2.cvtColor(images["right_center_rgb"], cv2.COLOR_BGR2LAB)"""
         info_input = [
-            max(float(info["speed"] * 3.6 / 100),0.2),
+            max(float(info["speed"] * 3.6 / 100),0.2 ),
             float(info["speed_limit"] * 3.6 / 100),
             info["traffic_light"]
         ]
@@ -131,10 +139,24 @@ class LSTMKeras(ModelInterface):
                 prediction = prediction[2]"""
 
 
+            """steer, acc = prediction[0][0], prediction[1][0]
+
+            if sinus:
+                steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
+                steer_angle = steer_curve_parameters[0]
+
+            brake = 1 if acc < -0.1 else 0
+            throttle = 0.5 if acc > 0 else 0
+
+        
+            print(acc)
+
+            return (steer_angle, throttle, brake)"""
+
             # print(brake)
             steer, throttle, brake = prediction[0][0], prediction[1][0], prediction[2][0]
             self.brake_hist.append(brake)
-            if len(self.brake_hist)>5:
+            if len(self.brake_hist)>7:
                 self.brake_hist.pop(0)
             if sinus:
                 steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
@@ -142,5 +164,12 @@ class LSTMKeras(ModelInterface):
 
             avg_brake = np.max(self.brake_hist)
             step_brake = 1 if avg_brake > 0.5 else 0
-            return (steer_angle, throttle, step_brake) if sinus else (steer, throttle, step_brake) 
+
+            """if self._frame % 30 != 0 and self._last_pred:
+                return self._last_pred"""
+
+            self._last_pred  = (steer_angle, throttle, step_brake) if sinus else (steer, throttle, step_brake) 
+            return self._last_pred
+    
+        
         return (0, 0.5, 0)

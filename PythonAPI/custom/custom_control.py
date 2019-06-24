@@ -536,6 +536,8 @@ class KeyboardControl(object):
             self.next_model()
 
         self._initialize_settings(settings)
+
+        self._entered_traffic_light_loc = None
  
 
         self._control = carla.VehicleControl()
@@ -957,10 +959,26 @@ class KeyboardControl(object):
             "right_center_rgb"]"""
 
         player = world.player
+        player_loc = world.player.get_location()
 
+
+        closest_wp = world.map.get_waypoint(world.player.get_location())
+        lane_yaw = closest_wp.transform.rotation.yaw
+        
+        
+        red_light = 0 if player.get_traffic_light_state() == carla.TrafficLightState.Red else 1
+        if not closest_wp.is_junction:
+            self._entered_traffic_light_loc = None
+        elif self._entered_traffic_light_loc is None:
+            print("yolo")
+            self._entered_traffic_light_loc = player_loc
+        else:
+            print(get_distance(player_loc, self._entered_traffic_light_loc))
+            if get_distance(player_loc, self._entered_traffic_light_loc) > 1:
+                red_light = 1
+                
         v = player.get_velocity()
-        red_light = 0 if player.get_traffic_light_state(
-        ) == carla.TrafficLightState.Red else 1
+
         speed = math.sqrt(v.x**2 + v.y**2 + v.z**2)
 
         info["speed"] = speed
@@ -1614,28 +1632,34 @@ class History:
 class Evaluator():
 
     def __init__(self, hud, world):
-         self.hud = hud
-         self.sensors = []
-         self.event_logs = []
-         self.model_summary = None
-         self.last_collision = 0
-         self.last_invasion = 0
-         self.world = world
-         self.last_wp = None
-         self.current_wp = None
-         self.last_dist = None
-         self.last_dist_at = None
-         self.total_dist_traveled = None
-         self.entered_oncoming_lane_at = None
-         self.cancel_reason = None
-         self.error_counter = None
-         self.current_episode_timestamp = None
-         self.current_episode_time = None
-         self.current_eval_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        self.hud = hud
+        self.sensors = []
+        self.event_logs = []
+        self.model_summary = None
+        self.last_collision = 0
+        self.last_invasion = 0
+        self.world = world
+        self.last_wp = None
+        self.current_wp = None
+        self.last_dist = None
+        self.last_dist_at = None
+        self.total_dist_traveled = None
+        self.entered_oncoming_lane_at = None
+        self.cancel_reason = None
+        self.error_counter = None
+        self.current_episode_timestamp = None
+        self.current_episode_time = None
+        self.current_eval_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        self._last_col_loc = None
+        self._in_junction = False
 
+        self._exited_junction_at = None
+    
+        
     def new_episode(self):
         self.last_wp = None
         self.current_wp = self.world._eval_routes[self.world._eval_routes_idx][0][0]
+        self._last_col_loc = None
 
         self.last_dist = float('inf')
         self.last_dist_at = None
@@ -1652,6 +1676,8 @@ class Evaluator():
         ]))
 
         self.error_counter = {}
+        self._in_junction = False
+        self._exited_junction_at = None
         for t in EventType:
             self.error_counter[t.name] = 0
 
@@ -1667,6 +1693,17 @@ class Evaluator():
         self.model_summary = pd.DataFrame(columns=cols)
 
     def tick(self):
+
+
+        closest_wp = self.world.map.get_waypoint(self.world.player.get_location())
+        lane_yaw = closest_wp.transform.rotation.yaw
+        if closest_wp.is_junction:
+            self._in_junction = True
+        else:
+            if self._in_junction:
+                self._exited_junction_at = time.time()
+            self._in_junction = False
+
         wp = self.world._eval_routes[self.world._eval_routes_idx][self.world._eval_route_idx][0]
         
         if self.current_wp != wp:
@@ -1683,7 +1720,7 @@ class Evaluator():
         if self.last_dist > dist:
             self.last_dist = dist
             self.last_dist_at = time.time()
-        elif self.last_dist<dist-5:
+        elif self.last_dist<dist-20:
             event_type = EventType.HLC_IGNORE
             self.error_counter[event_type.name] += 1
             self.cancel_reason = event_type
@@ -1746,7 +1783,7 @@ class Evaluator():
                     ignore_index=True)
                 return
         else:
-            if self.entered_oncoming_lane_at:
+            if self.entered_oncoming_lane_at and self.entered_oncoming_lane_at < time.time():
                 # Vehicle has entered oncoming lane, but recovered
                 print("Recovery")
                 event_type = EventType.ONCOMING_LANE_WITH_RECOVERY
@@ -1820,12 +1857,18 @@ class Evaluator():
 
     @staticmethod
     def _on_lane_invasion(weak_self, event):
+
         self = weak_self()
         if not self:
             return
         if(time.time() - self.last_invasion < 2):
             self.last_invasion = time.time()
             return
+
+
+        if self._in_junction or (self._exited_junction_at and self._exited_junction_at + 2 > time.time()):
+            return
+
         lane_type = (str(event.crossed_lane_markings[-1].type)).lower()
         location = event.actor.get_transform().location
         event_type = EventType.SIDEWALK_TOUCH if lane_type == 'none' else EventType.LANE_TOUCH 
@@ -1853,6 +1896,8 @@ class Evaluator():
         if not self:
             return
         
+        
+
         if(time.time() - self.last_collision < 3):
             self.last_collision = time.time()
             return
@@ -1863,6 +1908,16 @@ class Evaluator():
         impulse = event.normal_impulse
         intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
         timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+
+        if self._last_col_loc != None:
+            dist = get_distance(location, self._last_col_loc)
+            if dist < 5:
+                return
+            else:
+                self._last_col_loc = location
+        else:
+            self._last_col_loc = location
+
 
         if 'vehicle' in event.other_actor.type_id:
             other_actor_yaw = event.other_actor.get_transform().rotation.yaw
@@ -1966,7 +2021,7 @@ def game_loop(args, settings):
 
         while True:
             #sim_world.tick()
-            clock.tick(hud.server_fps_realtime)
+            clock.tick(int(hud.server_fps_realtime))
             if controller.parse_events(client, world, clock):
                 return
             world.tick(clock)
