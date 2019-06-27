@@ -131,28 +131,6 @@ class LSTMKeras(ModelInterface):
                 "environment_input": environments
             })
 
-            """if info["hlc"].value == 4:
-                prediction = prediction[0]
-            elif info["hlc"].value == 5:
-                prediction = prediction[1]
-            elif info["hlc"].value == 6:
-                prediction = prediction[2]"""
-
-
-            """steer, acc = prediction[0][0], prediction[1][0]
-
-            if sinus:
-                steer_curve_parameters = curve_fit(encoder, np.arange(1, 11, 1), steer)[0]
-                steer_angle = steer_curve_parameters[0]
-
-            brake = 1 if acc < -0.1 else 0
-            throttle = 0.5 if acc > 0 else 0
-
-        
-            print(acc)
-
-            return (steer_angle, throttle, brake)"""
-
             # print(brake)
             steer, throttle, brake = prediction[0][0], prediction[1][0], prediction[2][0]
             self.brake_hist.append(brake)

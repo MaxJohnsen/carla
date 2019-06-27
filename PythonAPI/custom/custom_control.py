@@ -152,6 +152,7 @@ try:
     from pygame.locals import K_r
     from pygame.locals import K_s
     from pygame.locals import K_u
+    from pygame.locals import K_y
     from pygame.locals import K_w
     from pygame.locals import K_KP1
     from pygame.locals import K_KP3
@@ -252,7 +253,7 @@ class World(object):
         # Other settings 
         self._environment = environment
         self._initialize_settings(settings)
-        self._hq_recording = hq_recording
+        self._hq_recording = True
         #self.world.on_tick(hud.on_world_tick)
         self._current_traffic_light = 0
         self._client_ap_active = False
@@ -264,6 +265,8 @@ class World(object):
         
         self.restart()
         self.world.on_tick(hud.on_world_tick)
+
+
         
 
 
@@ -388,7 +391,7 @@ class World(object):
         
         # Set up the sensors.
         self.camera_manager = CameraManager(self.player, self._client_ap, self.hud,
-                                            self.history, self._eval_mode, self._hq_recording)
+                                            self.history, self._eval_mode, hq_recording=self._hq_recording)
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
@@ -701,6 +704,9 @@ class KeyboardControl(object):
                             world.hud.notification('Change model')
                         else: 
                             world.hud.notification('No more models left')
+                elif event.key == K_y: 
+                    for traffic_light in world.world.get_actors().filter('*traffic_light*'):
+                        traffic_light.set_state(carla.TrafficLightState.Green)
                 elif event.key == K_KP1:
                     if self._control_type == ControlType.DRIVE_MODEL:
                         world.history.update_hlc(RoadOption.CHANGELANELEFT)
@@ -736,6 +742,7 @@ class KeyboardControl(object):
                     self._active_hlc = RoadOption.CHANGELANERIGHT
                     world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                     world.hud.notification('CHANGE LANE RIGHT')
+                    
 
         world.history.control_type = self._control_type
         
@@ -1282,7 +1289,7 @@ class HelpText(object):
 
 
 # ==============================================================================
-# -- CameraManager -------------------------------------------------------------
+# -- CameraManager ------------------------------------------------------------- 
 # ==============================================================================
 
 
@@ -1296,8 +1303,9 @@ class CameraManager(object):
         self._history = history
         self._recording = False 
         self._capture_rate = 1 if hq_recording else 3
+        print(self._capture_rate)
         self._frame_number = 1
-        self._hq_recording = hq_recording
+        self._hq_recording = True
         self._camera_transforms = [
             carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
             carla.Transform(carla.Location(x=0.5, z=2.3), carla.Rotation(pitch=-5)),
@@ -1394,9 +1402,22 @@ class CameraManager(object):
                 carla.Transform(carla.Location(x=-0.5, z=2.0)),
                 attach_to=self._parent)
             sensor.listen(lambda image: self._history.update_image_hq(
-                image, "hq_record", "rgb"))
+                image, "hq_record1", "rgb"))
             self._recording_sensors.append(sensor)
 
+            sensor_bp = self._parent.get_world().get_blueprint_library().find(
+                'sensor.camera.rgb')
+            sensor_bp.set_attribute('image_size_x', "1920")
+            sensor_bp.set_attribute('image_size_y', "1080")
+
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image_hq(
+                image, "hq_record2", "rgb"))
+            self._recording_sensors.append(sensor)
+    
 
     def _destroy_sensors(self):
         for sensor in self._recording_sensors:
@@ -1694,7 +1715,7 @@ class Evaluator():
 
     def tick(self):
 
-
+        return None
         closest_wp = self.world.map.get_waypoint(self.world.player.get_location())
         lane_yaw = closest_wp.transform.rotation.yaw
         if closest_wp.is_junction:
