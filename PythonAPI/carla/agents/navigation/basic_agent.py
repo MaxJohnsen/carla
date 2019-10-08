@@ -17,6 +17,9 @@ from agents.navigation.local_planner import LocalPlanner
 from agents.navigation.global_route_planner import GlobalRoutePlanner
 from agents.navigation.global_route_planner_dao import GlobalRoutePlannerDAO
 
+from agents.tools.misc import get_speed
+
+
 class BasicAgent(Agent):
     """
     BasicAgent implements a basic agent that navigates scenes to reach a given
@@ -30,12 +33,11 @@ class BasicAgent(Agent):
         """
         super(BasicAgent, self).__init__(vehicle)
 
-        self._proximity_threshold = 10.0  # meters
         self._state = AgentState.NAVIGATING
         args_lateral_dict = {
-            'K_P': 1,
-            'K_D': 0.02,
-            'K_I': 0,
+            'K_P': 0.75,
+            'K_D': 0.001,
+            'K_I': 1,
             'dt': 1.0/20.0}
         self._local_planner = LocalPlanner(
             self._vehicle, opt_dict={'target_speed' : target_speed,
@@ -47,7 +49,9 @@ class BasicAgent(Agent):
         self._grp = None
 
     def set_target_speed(self, target_speed):
+
         self._local_planner.set_target_speed(target_speed)
+
 
     def set_destination(self, location):
         """
@@ -122,5 +126,10 @@ class BasicAgent(Agent):
             self._state = AgentState.NAVIGATING
             # standard local planner behavior
             control = self._local_planner.run_step(debug=debug)
+
+            close_vehicle, _ = self._is_vehicle_close(vehicle_list)
+
+            if close_vehicle:
+                control.throttle =0
 
         return control

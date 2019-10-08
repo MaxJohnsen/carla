@@ -57,7 +57,7 @@ Use ARROWS or WASD keys for control.
 
 from __future__ import print_function
 from pathlib import Path
-from drive_models import CNNKeras, LSTMKeras
+from drive_models import LSTMKeras
 
 # ==============================================================================
 # -- find carla module ---------------------------------------------------------
@@ -105,10 +105,10 @@ import carla
 from carla import ColorConverter as cc
 from agents.navigation.roaming_agent import RoamingAgent
 from agents.navigation.basic_agent import BasicAgent
-from agents.tools.enums import RoadOption, Environment, ControlType
-from agents.tools.misc import distance_vehicle
+from agents.tools.enums import RoadOption, Environment, ControlType, WeatherType, EventType
+from agents.tools.misc import distance_vehicle, get_distance
 from vehicle_spawner import VehicleSpawner
-from helpers import is_valid_lane_change, get_best_models, get_parameter_text, set_green_traffic_light, get_lstm_config
+from helpers import is_valid_lane_change, get_parameter_text, set_green_traffic_light, get_models, get_route_distance
 
 import argparse
 import collections
@@ -198,54 +198,128 @@ def get_actor_display_name(actor, truncate=250):
 
 
 class World(object):
-    def __init__(self, client, carla_world, hud, history, actor_filter, settings, hq_recording):
+    def __init__(self, client, carla_world, hud, environment, history, actor_filter, settings, hq_recording=False):
         self.client = client
         self.world = carla_world
         self.map = self.world.get_map()
+        self.player = None
+        self._actor_filter = actor_filter
+
+        # Other classes 
         self.hud = hud
         self.history = history
-        self.player = None
         self.camera_manager = None
+        
+        # Weather 
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
-        self._spawn_point_start = 132
+        self._change_weather = None 
+        self._weather_type = None 
+        
+        self.evaluator = Evaluator(self.hud, self)
+
+
+        # Default pawnpoints 
+        self._spawn_point_start = 1
         self._spawn_point_destination = 7
-        self._actor_filter = actor_filter
+        
+        # Eval mode 
+        self._eval_mode = None
+        self._eval_num = None 
+        self._eval_num_current = None 
+        self._eval_cars = None 
+        self._eval_cars_idx = None 
+        self._eval_routes = None
+        self._eval_routes_idx = None    # Current evaluating route  
+        self._eval_route_idx = None     # Current route waypoint 
+        self._eval_weathers = None 
+        self._eval_weathers_idx = None 
+        self._eval_route_canceled = None
+
+        # Route recording 
+        self._new_spawn_point = None 
         self._routes = None 
         self._current_route_num = None
         self._tot_route_num = None 
         self._auto_record = None 
+
+        # Vehicle spawning 
         self._num_vehicles_min = None
         self._num_vehicles_max = None
         self._spawning_radius = None
-        self._auto_timeout = None 
         self._vehicle_spawner = VehicleSpawner(self.client, self.world)
+
+        # Other settings 
+        self._environment = environment
         self._initialize_settings(settings)
         self._hq_recording = hq_recording
-        self.restart()
-        self.world.on_tick(hud.on_world_tick)
+        #self.world.on_tick(hud.on_world_tick)
         self._current_traffic_light = 0
         self._client_ap_active = False
         self._quit_next = False
+        self._auto_timeout = None 
+
+        # Init settings 
+        self._initialize_settings(settings)
+        
+        self.restart()
+        self.world.on_tick(hud.on_world_tick)
+        
 
 
     def _initialize_settings(self, settings):
         s = {}
-        routes = settings.get("Carla", "Routes", fallback=None)
-        auto_record = settings.get("Carla", "AutoRecord", fallback=None)
-        self._num_vehicles_min = int(settings.get("Carla", "NumberOfVehiclesMin", fallback=0))
-        self._num_vehicles_max = int(settings.get("Carla", "NumberOfVehiclesMax", fallback=0))
-        self._spawning_radius = float(settings.get("Carla", "SpawnRadius", fallback=0))
-        self._auto_timeout = float(settings.get("Carla", "AutoTimeout", fallback=0))
+
+        # Read recording mode settings
+        routes = settings.get("Recording", "RecordingRoutes", fallback=None)
+        self._auto_record = True if settings.get("Recording", "AutoRecord", fallback="No").strip().lower() == "yes" else False 
+
+        # Read eval mode settings
+        self._eval_mode = True if settings.get("Eval", "EvalMode", fallback="No").strip().lower() == "yes" else False 
+        self._eval_num = int(settings.get("Eval", "EvalNum", fallback=1))
+        self._eval_num_current = 1 
+        eval_cars = settings.get("Eval", "EvalCars", fallback=None)
+        eval_routes = settings.get("Eval", "EvalRoutes", fallback=None)
+        eval_weathers = settings.get("Eval", "EvalWeathers", fallback=None)
+
+        # Read vehicle settings 
+        self._num_vehicles_min = int(settings.get("Spawning", "NumberOfVehiclesMin", fallback=0))
+        self._num_vehicles_max = int(settings.get("Spawning", "NumberOfVehiclesMax", fallback=0))
+        self._spawning_radius = float(settings.get("Spawning", "SpawnRadius", fallback=0))
+
+        # Read autotimeout: The duration of an episode in server autopilot 
+        self._auto_timeout = float(settings.get("Settings", "AutoTimeout", fallback=0))
+
+        # Read weather settings 
+        self._change_weather = True if settings.get("Weather", "ChangeWeather", fallback="No") == "Yes" else False 
+        self._weather_index = -1 if self._change_weather else 0
+        self._weather_type = WeatherType[settings.get("Weather", "WeatherType", fallback="ALL")]
+
+        # Parse settings from string to lists 
         if routes: 
             routes = routes.split()
             routes = [ast.literal_eval(r) for r in routes]
             self._routes = [[int(r[0]), int(r[1])] for r in routes]
             self._current_route_num = 0
             self._tot_route_num = len(self._routes)
-        if auto_record:
-            self._auto_record = True if auto_record.strip() == "Yes" else False
-
+        if eval_routes:
+            self._eval_routes_idx = 0 
+            self._eval_route_idx = 0 
+            self._eval_routes = []
+            eval_routes = eval_routes.split()
+            for eval_route in eval_routes: 
+                eval_route = [ast.literal_eval(e) for e in eval_route.split()][0]
+                self._eval_routes.append(eval_route)
+        if eval_cars: 
+            eval_cars = eval_cars.split()
+            eval_cars = [ast.literal_eval(c) for c in eval_cars][0]
+            self._eval_cars = eval_cars
+            self._eval_cars_idx = 0 
+        if eval_weathers: 
+            eval_weathers = eval_weathers.split()
+            eval_weathers = [ast.literal_eval(w) for w in eval_weathers][0]
+            self._eval_weathers = eval_weathers
+            self._eval_weathers_idx = 0
         
 
     def restart(self):
@@ -258,96 +332,149 @@ class World(object):
 
         # Get a vehilce blueprint.
         blueprint = self.world.get_blueprint_library().filter(
-            'vehicle.tesla.*')[0]
-
+            'vehicle.audi.etron')[0]
+        # Set the vehicle as hero player 
         blueprint.set_attribute('role_name', 'hero')
 
-        #self._vehicle_spawner.destroy_vehicles()
+        # Destroy player 
         if self.player is not None:
             self.destroy()
             self.player = None
 
-        if self._routes is not None:
-            if len(self._routes)>0:
-                route = self._routes.pop(0)
-                self._spawn_point_start = route[0]
-                self._spawn_point_destination = route[1]
-            else:
-                self._quit_next = True
-        if self._current_route_num is not None: 
-            self._current_route_num += 1
-            
-        spawn_point = self.map.get_spawn_points()[self._spawn_point_start]
+        # Choose starting spawnpoit in eval routes 
+        if self._eval_mode is not None and self._eval_mode != False: 
+            self._eval_route_canceled = False
+            spawn_point =  self.map.get_spawn_points()[self._eval_routes[self._eval_routes_idx][0][0]]
+            destination_point =  self.map.get_spawn_points()[self._eval_routes[self._eval_routes_idx][-1][0]]
+            self._spawn_point_start = self._eval_routes[self._eval_routes_idx][0][0]
+            if self._eval_cars is not None: 
+                self._vehicle_spawner.spawn_nearby(
+                    self._spawn_point_start, 
+                    self._eval_cars[self._eval_cars_idx], 
+                    self._eval_cars[self._eval_cars_idx], 
+                    self._spawning_radius) 
 
+        # Choose starting spawnpoint in recording routes 
+        elif self._new_spawn_point is None: 
+            if self._routes is not None:
+                route_len = len(self._routes)
+                if len(self._routes)>0:
+                    route = self._routes.pop(0)
+                    self._spawn_point_start = route[0]
+                    self._spawn_point_destination = route[1]
+                else:
+                    self._quit_next = True
+            if self._current_route_num is not None and route_len>0: 
+                self._current_route_num += 1
+            spawn_point = self.map.get_spawn_points()[self._spawn_point_start]
+            destination_point = self.map.get_spawn_points()[self._spawn_point_destination]
+
+        # Choose starting spawnpoint normally     
+        else: 
+            self._spawn_point_start = self._new_spawn_point
+            spawn_point = self.map.get_spawn_points()[self._spawn_point_start]
+            destination_point = self.map.get_spawn_points()[self._spawn_point_destination] # TODO: what should be destination? 
+            self._new_spawn_point = None 
+
+        # Spawn player 
         while self.player is None:
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
 
+        # Create Autopilot 
         self._client_ap = BasicAgent(self.player)
-
-        destination_point = self.map.get_spawn_points()[self._spawn_point_destination]
         self._client_ap.set_destination((destination_point.location.x,
                                 destination_point.location.y,
                                 destination_point.location.z))
         
         # Set up the sensors.
         self.camera_manager = CameraManager(self.player, self._client_ap, self.hud,
-                                            self.history, self._hq_recording)
+                                            self.history, self._eval_mode, self._hq_recording)
         self.camera_manager._transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         self.camera_manager._initiate_recording()
+
+        if self._eval_mode is not None and self._eval_mode != False:
+            self.evaluator.initialize_sensors(self.player)
+            self.evaluator.new_episode()
+            if self._eval_weathers is not None: 
+                self.set_weather(self._eval_weathers[self._eval_weathers_idx])
         
         # Turn on recording at new route 
         if self._auto_record: 
             self.camera_manager.toggle_recording()
         actor_type = get_actor_display_name(self.player)
-        # self.hud.notification(actor_type)      
 
-        if self._num_vehicles_max != 0 and self._spawning_radius is not None: 
+        # Spawn other vehicles, but not in eval mode  
+        if not self._eval_mode and self._num_vehicles_max != 0 and self._spawning_radius is not None: 
             self._vehicle_spawner.spawn_nearby(self._spawn_point_start, self._num_vehicles_min, self._num_vehicles_max, self._spawning_radius)
 
+        # Change weather 
+        if self._change_weather == True and self._eval_mode == False:
+            self.next_weather(weather_type=self._weather_type)
 
-        self.next_weather()
         self.hud._episode_start_time = self.hud.simulation_time
 
-    def next_weather(self, reverse=False):
+
+    def set_weather(self, weather_idx): 
+        """ Set weather to given id"""
+        self._weather_index = weather_idx
+        preset = self._weather_presets[self._weather_index]
+        self.hud.notification('Weather: %s' % preset[1])
+        self.world.set_weather(preset[0])
+        self.history.update_weather_index(self._weather_index)
+    
+    def next_weather(self, reverse=False, weather_type=None):
+        """ Change weather to next weather """
         self._weather_index += -1 if reverse else 1
         self._weather_index %= len(self._weather_presets)
-        preset = self._weather_presets[self._weather_index]
-        self.hud.notification('Weather: %s' % preset[1])
-        self.player.get_world().set_weather(preset[0])
-
-        self.history.update_weather_index(self._weather_index)
-
-    def next_rain(self, reverse=False):
-        if self._weather_index < 4 or self._weather_index > 8:
+        
+        # Only choose clear weather 
+        if weather_type == WeatherType.CLEAR and self._weather_index > 3: 
+            self._weather_index = 0
+            
+        # Only choose rainy/wet weather 
+        if weather_type == WeatherType.RAIN and self._weather_index < 4: 
             self._weather_index = 4
-        else: 
-            self._weather_index += 1 
+    
+
         preset = self._weather_presets[self._weather_index]
         self.hud.notification('Weather: %s' % preset[1])
         self.player.get_world().set_weather(preset[0])
 
         self.history.update_weather_index(self._weather_index)
 
-    def reset_weahter(self): 
+    def reset_weather(self): 
+        """ Set weather to first weather """
         preset = self._weather_presets[0]
         self.hud.notification('Weather: %s' % preset[1])
         self.player.get_world().set_weather(preset[0])
 
 
     def next_spawn_point(self):
-        self._spawn_point_start += 1
-        self.restart()
+        if len(self.map.get_spawn_points())>self._spawn_point_start:
+            self._new_spawn_point = self._spawn_point_start+1
+            self.restart()
+            self.hud.notification('Next spawn point')
+        else: 
+            self.hud.notification("No next spawn point")
 
-    def previous_spawn_point(self):
+
+    def previous_spawn_point(self, ):
         if self._spawn_point_start > 0: 
-            self._spawn_point_start -= 1
-        self.restart()
+            self._new_spawn_point = self._spawn_point_start-1
+            self.restart()
+            self.hud.notification('Next spawn point')
+        else: 
+            self.hud.notification("No previous spawn point")
+            
 
     def tick(self, clock):
 
         self.hud.tick(self, clock)
         self.camera_manager.tick()
+
+        if self._eval_mode:
+            self.evaluator.tick()
 
     def render(self, display):
         self.camera_manager.render(display)
@@ -368,6 +495,9 @@ class World(object):
                 actor.destroy()
         self.camera_manager._destroy_sensors()
         self._vehicle_spawner.destroy_vehicles() 
+        
+        if self.evaluator:
+            self.evaluator.destroy_sensors()
 
 
 # ==============================================================================
@@ -376,37 +506,64 @@ class World(object):
 
 
 class KeyboardControl(object):
-    def __init__(self, world, settings, environment, use_steering_wheel=False, drive_model=None, model_paths=None, parameter_paths=None, config_paths=None):
-        self._drive_model = drive_model
-        self._model_paths = model_paths
-        self._parameter_paths = parameter_paths
-        self._config_paths = config_paths
+    def __init__(self, world, settings, use_steering_wheel=False, models=None): 
+        self._world = world 
 
+        # Model 
+        self._models = models
+        self._drive_model = None 
+        self._current_model_idx = None   
+        
+
+        # Settings 
         self._steering_wheel_enabled = use_steering_wheel
         self._control_type = None 
-
+        self._red_lights_allowed = None 
         self._noise_enabled = False
         self._noise_amount = None
+        self._environment = None 
 
+        # History 
         self._lane_change_activated = None
         self._lane_change_started = False
         self._history_size = 10
         self._steer_history = []
         self._active_hlc = RoadOption.LANEFOLLOW
 
+        # Initalize model 
+        if self._models is not None:
+            self._current_model_idx = -1  
+            self.next_model()
+
         self._initialize_settings(settings)
+
+        self._entered_traffic_light_loc = None
+ 
+
         self._control = carla.VehicleControl()
-        world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
+        self._world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
         self._steer_cache = 0.0
-        self._environment = environment
+
 
          # initialize steering wheel
         if self._steering_wheel_enabled:
             self._initialize_steering_wheel()
 
+    
+    def _initialize_model(self):
+        path, seq_length, sampling_interval = self._models[self._current_model_idx]
+        self._drive_model = LSTMKeras(path, seq_length, sampling_interval)
+        self._world.hud._drive_model_name = '/'.join(path.split('/')[-2:])
+        self._world.hud._drive_model_idx = self._current_model_idx 
+        self._world.hud._drive_model_num = len(self._models)
+        
+    
     def _initialize_settings(self, settings):
-        self._control_type = ControlType[settings.get("Carla", "ControlType", fallback="MANUAL")]
-        self._noise_amount = float(settings.get("Carla", "Noise", fallback="0"))
+        self._control_type = ControlType[settings.get("Settings", "ControlType", fallback="MANUAL")]
+        self._red_lights_allowed = True if settings.get("Settings", "RedLights", fallback="No") == "Yes" else False 
+        self._noise_amount = float(settings.get("Settings", "Noise", fallback="0"))
+        if self._noise_amount != 0: 
+            self._noise_enabled = True
         if self._drive_model is None and self._control_type == ControlType.DRIVE_MODEL: 
             self._control_type = ControlType.MANUAL
     
@@ -431,6 +588,22 @@ class KeyboardControl(object):
         self._handbrake_idx = int(
             self._parser.get('G29 Racing Wheel', 'handbrake'))
 
+    def next_model(self): 
+        if self._models is not None:
+            self._current_model_idx += 1 
+            if len(self._models)> self._current_model_idx: 
+                self._initialize_model()
+                self._world.evaluator.initialize_model()
+                return True 
+            else:
+                print("INFO: No more new models") 
+                return False 
+        else: 
+            print("ERROR: Failed to initialize model, list of models was None or empty")
+            return False
+        
+
+    
     def _add_to_steer_history(self, steer):
         self._steer_history.insert(0, steer)
         if len(self._steer_history) > self._history_size:
@@ -439,6 +612,8 @@ class KeyboardControl(object):
         
 
     def parse_events(self, client, world, clock):
+        if not self._red_lights_allowed and world._eval_cars[world._eval_cars_idx] == 0: 
+            set_green_traffic_light(world.player)
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
@@ -463,9 +638,12 @@ class KeyboardControl(object):
                 if self._is_quit_shortcut(event.key):
                     return True
                 elif event.key == K_BACKSPACE:
-                    world.restart()
-                    if self._control_type == ControlType.SERVER_AP:
-                        world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
+                    if world._eval_mode:
+                        world._eval_route_canceled = True
+                    else:
+                        world.restart()
+                        if self._control_type == ControlType.SERVER_AP:
+                            world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
                 elif event.key == K_F1:
                     world.hud.toggle_info()
                 elif event.key == K_h:
@@ -475,13 +653,12 @@ class KeyboardControl(object):
                 elif event.key == K_n:
                     if self._control_type == ControlType.SERVER_AP:
                         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
+                    
                     world.next_spawn_point()
-                    world.hud.notification('Next spawn point')
                 elif event.key == K_b:
                     if self._control_type == ControlType.SERVER_AP:
                         world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
                     world.previous_spawn_point()
-                    world.hud.notification('Previous spawn point')
                 elif event.key == K_c and pygame.key.get_mods() & KMOD_SHIFT:
                     world.next_weather(reverse=True)
                 elif event.key == K_c:
@@ -519,31 +696,11 @@ class KeyboardControl(object):
                     world._client_ap_active = not world._client_ap_active 
                 elif event.key == K_u: 
                     # If multiple model testing is activated and there are remaining models to test 
-                    if self._model_paths is not None and len(self._model_paths)>0: 
-                        drive_model_parameters = self._parameter_paths.pop(0)
-                        drive_model_path = self._model_paths.pop(0) 
-                        config_path = self._config_paths.pop(0)
-
-                        steer_scale, seq_length, sampling_interval, model_type = get_lstm_config(config_path)
-                        if model_type == "lstm":
-                            model = LSTMKeras()
-                            model.load_model(drive_model_path, steer_scale, seq_length, sampling_interval)
-                        elif model_type == "cnn": 
-                            model = CNNKeras()
-                            model.load_model(drive_model_path, steer_scale)
+                    if self._models is not None: 
+                        if self.next_model():
+                            world.hud.notification('Change model')
                         else: 
-                            print("ERROR: do not recognize model type")
-
-
-                        self._drive_model = model
-                        world.restart()
-
-                        world.hud.notification('Next model')
-                        world.hud._drive_model_parameters = get_parameter_text(drive_model_parameters)
-                        world.hud._drive_model_name = str(drive_model_path).split('/')[-1]
-
-                    else: 
-                        world.hud.notification('No more models left')
+                            world.hud.notification('No more models left')
                 elif event.key == K_KP1:
                     if self._control_type == ControlType.DRIVE_MODEL:
                         world.history.update_hlc(RoadOption.CHANGELANELEFT)
@@ -552,49 +709,189 @@ class KeyboardControl(object):
                     if self._control_type == ControlType.DRIVE_MODEL:
                         world.history.update_hlc(RoadOption.CHANGELANERIGHT)
                         self._lane_change_activated = (world.hud.simulation_time, np.mean(self._steer_history), world.map.get_waypoint(world.player.get_location()).lane_id, RoadOption.CHANGELANERIGHT)
+                elif event.key == K_KP8:
+                    self._active_hlc = RoadOption.STRAIGHT
+                    world.hud.notification('STRAIGHT')
+                    world.history.update_hlc(RoadOption.STRAIGHT)
+
+                elif event.key == K_KP4:
+                    self._active_hlc = RoadOption.LEFT
+                    world.hud.notification('LEFT')
+                    world.history.update_hlc(RoadOption.LEFT)
+
                 elif event.key == K_KP5:
-                    world.hud.notification('Follow lane')
-                    self._active_hlc = RoadOption.LANEFOLLOW                
+                    self._active_hlc = RoadOption.LANEFOLLOW
+                    world.hud.notification('LANE FOLLOW')
+                    world.history.update_hlc(RoadOption.LANEFOLLOW)
+
+                elif event.key == K_KP6:
+                    self._active_hlc = RoadOption.RIGHT
+                    world.hud.notification('RIGHT')
+                    world.history.update_hlc(RoadOption.RIGHT)
                 elif event.key == K_KP7:
-                    world.hud.notification('Left lane change')
                     self._active_hlc = RoadOption.CHANGELANELEFT
+                    world.history.update_hlc(RoadOption.CHANGELANELEFT)
+                    world.hud.notification('CHANGE LANE LEFT')
                 elif event.key == K_KP9:
-                    world.hud.notification('Right lane change')
                     self._active_hlc = RoadOption.CHANGELANERIGHT
+                    world.history.update_hlc(RoadOption.CHANGELANERIGHT)
+                    world.hud.notification('CHANGE LANE RIGHT')
 
         world.history.control_type = self._control_type
+        
+        # Evaluationg multiple models 
+        if world._eval_mode: 
+            if self._control_type != ControlType.DRIVE_MODEL:
+                pass 
+                #print("ERROR: Evaluation mode expects control type DRIVE_MODEL, received " + self._control_type.name)
+                #return True
 
+            next_waypoint  = world.map.get_spawn_points()[world._eval_routes[world._eval_routes_idx][world._eval_route_idx][0]]
+            
+            # Calculate distance to next waypoint 
+            loc = world.player.get_transform().location
+            dx = next_waypoint.location.x - loc.x
+            dy = next_waypoint.location.y - loc.y
+            distance = math.sqrt(dx * dx + dy * dy)
+            
+            # Vehicle has reached next waypoint or have experienced a catastrophic failure
+            if distance < 4 or world._eval_route_canceled: 
+                # Get road option 
+                _, road_option = world._eval_routes[world._eval_routes_idx][world._eval_route_idx]
+                
 
+                world.hud.notification(RoadOption(road_option).name)
+                # Update HLC
+                world.history.update_hlc(RoadOption(road_option))
+                self._active_hlc = RoadOption(road_option)
+                world.hud.notification(self._active_hlc.name)
+                
+                route_complete = world._eval_route_idx == len(world._eval_routes[world._eval_routes_idx])-1
+                # Check if this is the last waypoint in route, or the route is canceled
+                if route_complete or world._eval_route_canceled:
+                    self._drive_model.restart()
+                    world.evaluator.episode_complete(route_complete)
+
+                    if len(world._eval_routes)-1 == world._eval_routes_idx: 
+                        # At the end of the last route  
+                        world._eval_routes_idx = 0 
+                        world._eval_route_idx = 0
+                        
+                        # Check if there are available weathers left 
+                        if world._eval_weathers is None or world._eval_weathers_idx == len(world._eval_weathers)-1: 
+                            world._eval_weathers_idx = 0
+                            # Check if there are available car-spawns left 
+                            if world._eval_cars is None or world._eval_cars_idx == len(world._eval_cars)-1:    
+                                world._eval_cars_idx = 0
+                                # Check if model has been tested eval_num times 
+                                if world._eval_num_current == world._eval_num: 
+                                    # If it has, check for available models left 
+                                    if self._current_model_idx == len(self._models)-1:
+                                        # Exit
+                                        return True 
+                                    else:
+                                        world._eval_num_current = 1
+                                        self.next_model()
+                                else: 
+                                    world._eval_num_current += 1
+               
+                            else: 
+                                world._eval_cars_idx += 1 
+
+                        else: 
+                            world._eval_weathers_idx += 1 
+
+                        
+                        world.restart() 
+                        
+
+                    
+                    else: 
+
+                        # Next route 
+                        world._eval_route_idx = 0 
+                        world._eval_routes_idx += 1 
+                        world.restart() 
+                else:
+
+                    # Update next waypoint id
+                    world._eval_route_idx += 1 
+
+        # Server Autopilot Driving 
         if self._control_type == ControlType.SERVER_AP: 
             world.player.set_autopilot(self._control_type==ControlType.SERVER_AP)
-            if world._current_route_num-1 == world._tot_route_num:
-                
-                return True
-            if world._auto_timeout != 0 and world.hud.simulation_time - world.hud._episode_start_time > world._auto_timeout: 
-                world.restart()     
+
+            # Update lane check 
+            is_left = is_valid_lane_change(RoadOption.CHANGELANELEFT, world)
+            world.history.update_left_lane_change_valid(is_left)
+
+            is_right = is_valid_lane_change(RoadOption.CHANGELANERIGHT, world)
+            world.history.update_right_lane_change_valid(is_right)
+
+            # If RouteRecording is activated  
+            if world._routes is not None:
+                # Exit game if no more routes are available  
+                if world._current_route_num-1 == world._tot_route_num:                
+                    return True
+                # Change route when it has driven for more than set route duration 
+                if world._auto_timeout != 0 and world.hud.simulation_time - world.hud._episode_start_time > world._auto_timeout: 
+                    world.restart()     
+
+        # Manual Driving 
         elif self._control_type == ControlType.MANUAL:
+
+            # Update lane check 
+            is_left = is_valid_lane_change(RoadOption.CHANGELANELEFT, world)
+            world.history.update_left_lane_change_valid(is_left)
+
+            is_right = is_valid_lane_change(RoadOption.CHANGELANERIGHT, world)
+            world.history.update_right_lane_change_valid(is_right)
+
+            # Steering wheel activated 
             if self._steering_wheel_enabled: 
                 self._parse_vehicle_wheel()
             else:
                 self._parse_vehicle_keys(world, pygame.key.get_pressed(),
                                             clock.get_time())
             self._control.reverse = self._control.gear < 0
+        
+        # Model Driving 
         elif self._control_type == ControlType.DRIVE_MODEL:
             self._parse_drive_model_commands(world)
+        
+        # Client Autopilot Driving 
         elif self._control_type == ControlType.CLIENT_AP:
+            # Update HLC to current RoadOption 
             world.history.update_hlc(world._client_ap._local_planner._target_road_option)
-            #print(world.history._latest_hlc)
+
+            # Update lane check 
+            is_left = is_valid_lane_change(RoadOption.CHANGELANELEFT, world)
+            world.history.update_left_lane_change_valid(is_left)
+
+            is_right = is_valid_lane_change(RoadOption.CHANGELANERIGHT, world)
+            world.history.update_right_lane_change_valid(is_right)
+            
+            # Set target speed to current speed limit - 10 km/h 
             world._client_ap.set_target_speed(world.player.get_speed_limit()-10)
+            
             self._parse_client_ap(world)
+            
+            # Calculate distance to destination  
+            destination_waypoint  = world.map.get_spawn_points()[world._spawn_point_destination]
+            loc = world.player.get_transform().location
+            dx = destination_waypoint.location.x - loc.x
+            dy = destination_waypoint.location.y - loc.y
+            distance = math.sqrt(dx * dx + dy * dy)
+
             # Change route if client AP has reached its destination
-            position = world.player.get_transform().location
-            destination  = world.map.get_spawn_points()[world._spawn_point_destination].location
-            if abs(position.x-destination.x) < 20 and abs(position.y-destination.y)<20:
+            if distance<20:
                 world.hud.notification("Route Complete")
                 world.restart()
+                # Exit program if all routes are finished 
                 if world._quit_next:
                     return True
         
+        # Automatic Lane Change
         if self._lane_change_activated != None:
             activated, original_steer, original_lane, option = self._lane_change_activated
             if self._lane_change_started or is_valid_lane_change(option,world):
@@ -602,13 +899,15 @@ class KeyboardControl(object):
                 direction = 1 if option == RoadOption.CHANGELANELEFT else -1
                 current_lane = world.map.get_waypoint(world.player.get_location()).lane_id
                 if abs(current_lane) == abs(original_lane):
-                    self._control.steer =  original_steer - 0.015*direction
+                    self._control.steer =  original_steer - 0.005*direction
                 else:
                     self._lane_change_activated = None
                     self._lane_change_started = False
                     world.history.update_hlc(RoadOption.LANEFOLLOW)
         else:    
             self._add_to_steer_history(self._control.steer)
+        
+        # Apply control signal to vehicle 
         world.player.apply_control(self._control)
 
         
@@ -654,23 +953,39 @@ class KeyboardControl(object):
 
         images["forward_center_rgb"] = world.history._latest_images[
             "forward_center_rgb"]
-        images["left_center_rgb"] = world.history._latest_images[
+        """images["left_center_rgb"] = world.history._latest_images[
             "left_center_rgb"]
         images["right_center_rgb"] = world.history._latest_images[
-            "right_center_rgb"]
+            "right_center_rgb"]"""
 
         player = world.player
+        player_loc = world.player.get_location()
 
+
+        closest_wp = world.map.get_waypoint(world.player.get_location())
+        lane_yaw = closest_wp.transform.rotation.yaw
+        
+        
+        red_light = 0 if player.get_traffic_light_state() == carla.TrafficLightState.Red else 1
+        if not closest_wp.is_junction:
+            self._entered_traffic_light_loc = None
+        elif self._entered_traffic_light_loc is None:
+            print("yolo")
+            self._entered_traffic_light_loc = player_loc
+        else:
+            print(get_distance(player_loc, self._entered_traffic_light_loc))
+            if get_distance(player_loc, self._entered_traffic_light_loc) > 1:
+                red_light = 1
+                
         v = player.get_velocity()
-        red_light = 0 if player.get_traffic_light_state(
-        ) == carla.TrafficLightState.Red else 1
+
         speed = math.sqrt(v.x**2 + v.y**2 + v.z**2)
 
         info["speed"] = speed
         info["traffic_light"] = red_light
         info["speed_limit"] = player.get_speed_limit() / 3.6
-        info["hlc"] = self._active_hlc
-        info["environment"] = self._environment.value
+        info["hlc"] = world.history._latest_hlc
+        info["environment"] = world._environment
 
         steer = 0
         throttle = 0
@@ -695,24 +1010,6 @@ class KeyboardControl(object):
             self._steer_cache += steer_increment
         else:
             self._steer_cache = 0.0
-
-        # Update HLC 
-        """if keys[K_KP1]: 
-            world.history.update_hlc(RoadOption.CHANGELANELEFT.value)
-        elif keys[K_KP3]: 
-            world.history.update_hlc(RoadOption.CHANGELANERIGHT.value)
-        elif keys[K_KP4]: 
-            world.history.update_hlc(RoadOption.LEFT.value)
-        elif keys[K_KP5]: 
-            world.history.update_hlc(RoadOption.LANEFOLLOW.value)
-        elif keys[K_KP6]: 
-            world.history.update_hlc(RoadOption.RIGHT.value)
-        elif keys[K_KP8]: 
-            world.history.update_hlc(RoadOption.STRAIGHT.value)
-        
-        else: 
-            world.history.update_hlc(RoadOption.LANEFOLLOW.value)"""
-
 
         self._steer_cache = min(0.7, max(-0.7, self._steer_cache))
         self._control.steer = round(self._steer_cache, 1)
@@ -745,6 +1042,8 @@ class KeyboardControl(object):
 
 class HUD(object):
     def __init__(self, width, height):
+
+        # Display parameters 
         self.dim = (width, height)
         font = pygame.font.Font(pygame.font.get_default_font(), 20)
         fonts = [x for x in pygame.font.get_fonts() if 'mono' in x]
@@ -754,6 +1053,8 @@ class HUD(object):
         self._font_mono = pygame.font.Font(self._mono, 14)
         self._notifications = FadingText(font, (width, 40), (0, height - 40))
         self.help = HelpText(pygame.font.Font(self._mono, 24), width, height)
+
+        # Content parameters 
         self.server_fps = 0
         self.server_fps_realtime = 0
         self.frame_number = 0
@@ -762,8 +1063,11 @@ class HUD(object):
         self._info_text = []
         self._server_clock = pygame.time.Clock()
         self._episode_start_time = 0
-        self._drive_model_parameters = []
-        self._drive_model_name = None
+        
+        # Print info in eval mode
+        self._drive_model_name = None 
+        self._drive_model_num = None 
+        self._drive_model_idx = None 
 
     def on_world_tick(self, timestamp):
         self._server_clock.tick()
@@ -808,6 +1112,11 @@ class HUD(object):
                                 (t.location.x, t.location.y)),
             'Height:  % 18.0f m' % t.location.z, ''
         ]
+        if world._auto_record: 
+            self._info_text += ['Mode: Recording']
+
+        if world._eval_mode: 
+            self._info_text += ['Mode: Eval']
         if world._current_route_num is not None and world._tot_route_num is not None: 
             self._info_text += ['Route status: % 11d/%2d' % (world._current_route_num, world._tot_route_num)]
         if isinstance(c, carla.VehicleControl):
@@ -824,13 +1133,24 @@ class HUD(object):
         self._info_text += [
             'Number of vehicles: % 8d' % len(vehicles)
         ]
-        if self._drive_model_name is not None: 
-            self._info_text += ['']
-            self._info_text += ['Drive model: %s' % self._drive_model_name]
+        if world._eval_mode: 
+            if world._eval_num is not None and world._eval_num_current is not None: 
+                self._info_text += ['']
+                self._info_text += ['Eval run: %d/%d' % (world._eval_num_current, world._eval_num )]
 
-        if len(self._drive_model_parameters)> 0: 
-            for param in self._drive_model_parameters: 
-                self._info_text += [param]
+            if self._drive_model_name is not None: 
+                self._info_text += ['Model: %s (%d/%d)' % (self._drive_model_name, self._drive_model_idx+1, self._drive_model_num)]
+
+            if world._eval_cars_idx is not None and world._eval_cars is not None: 
+                self._info_text += ['Spawned vehicles: %d (%d/%d)' % (world._eval_cars[world._eval_cars_idx], world._eval_cars_idx+1, len(world._eval_cars))]
+
+            if world._eval_weathers_idx is not None and world._eval_weathers is not None: 
+                self._info_text += ['Eval weather: %d/%d' % (world._eval_weathers_idx+1, len(world._eval_weathers))]
+
+            if world._eval_routes_idx is not None and world._eval_routes is not None: 
+                self._info_text += ['Eval route: %d/%d' % (world._eval_routes_idx+1, len(world._eval_routes))]
+                self._info_text += ['']
+
         self._info_text.append(('Speed: ', '%.0f/%.0f'%(speed, speed_limit)))
 
 
@@ -893,11 +1213,11 @@ class HUD(object):
                 v_offset += 18
             font = pygame.font.Font(self._mono, 32)
             surface = font.render(speed[0], True, (255, 255, 255))
-            display.blit(surface, (8, self.dim[1]-200))    
+            display.blit(surface, (8, self.dim[1]-160))    
             
             font = pygame.font.Font(self._mono, 60)
             surface = font.render(speed[1], True, (255, 255, 255))
-            display.blit(surface, (8, self.dim[1]-150))     
+            display.blit(surface, (8, self.dim[1]-110))     
             
         self._notifications.render(display)
         self.help.render(display)
@@ -967,7 +1287,7 @@ class HelpText(object):
 
 
 class CameraManager(object):
-    def __init__(self, parent_actor, client_ap, hud, history, hq_recording):
+    def __init__(self, parent_actor, client_ap, hud, history, eval=False, hq_recording=False):
         self.sensor = None
         self._surface = None
         self._parent = parent_actor
@@ -979,11 +1299,11 @@ class CameraManager(object):
         self._frame_number = 1
         self._hq_recording = hq_recording
         self._camera_transforms = [
-            carla.Transform(
-                carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
-            carla.Transform(carla.Location(x=1.6, z=1.7))
+            carla.Transform(carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)),
+            carla.Transform(carla.Location(x=0.5, z=2.3), carla.Rotation(pitch=-5)),
         ]
         self._transform_index = 1
+        self.eval = eval
         self._sensors = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
             ['sensor.camera.depth', cc.Raw, 'Camera Depth (Raw)'],
@@ -1025,47 +1345,43 @@ class CameraManager(object):
 
         sensor = self._parent.get_world().spawn_actor(
             sensor_bp,
-            carla.Transform(carla.Location(x=0.5, z=1.7)),
+            carla.Transform(carla.Location(x=0.5, z=2.3), carla.Rotation(pitch=-5)),
             attach_to=self._parent)
         sensor.listen(lambda image: self._history.update_image(
             image, "forward_center", "rgb"))
         self._recording_sensors.append(sensor)
+        if not self.eval:
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0.5, y=-0.7, z=2.3), carla.Rotation(pitch=-5)),
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "forward_left", "rgb"))
+            self._recording_sensors.append(sensor)
 
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(carla.Location(x=0.5, y=-0.7, z=1.7)),
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "forward_left", "rgb"))
-        self._recording_sensors.append(sensor)
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0.5, y=0.7, z=2.3), carla.Rotation(pitch=-5)),
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "forward_right", "rgb"))
+            self._recording_sensors.append(sensor)
 
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(carla.Location(x=0.5, y=0.7, z=1.7)),
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "forward_right", "rgb"))
-        self._recording_sensors.append(sensor)
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0, y=-0.5, z=1.8),carla.Rotation(pitch=-20, yaw=-90)),        
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "left_center", "rgb")) 
+            self._recording_sensors.append(sensor)
 
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(
-                carla.Location(x=0, y=-0.5, z=1.8),
-                carla.Rotation(pitch=-20, yaw=-90)),
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "left_center", "rgb"))
-        self._recording_sensors.append(sensor)
-
-        sensor = self._parent.get_world().spawn_actor(
-            sensor_bp,
-            carla.Transform(
-                carla.Location(x=0, y=0.5, z=1.8),
-                carla.Rotation(pitch=-20, yaw=90)),
-            attach_to=self._parent)
-        sensor.listen(lambda image: self._history.update_image(
-            image, "right_center", "rgb"))
-        self._recording_sensors.append(sensor)
+            sensor = self._parent.get_world().spawn_actor(
+                sensor_bp,
+                carla.Transform(carla.Location(x=0, y=0.5, z=1.8),carla.Rotation(pitch=-20, yaw=90)),        
+                attach_to=self._parent)
+            sensor.listen(lambda image: self._history.update_image(
+                image, "right_center", "rgb"))
+            self._recording_sensors.append(sensor)
 
         if self._hq_recording:
             sensor_bp = self._parent.get_world().get_blueprint_library().find(
@@ -1182,6 +1498,8 @@ class History:
         self.control_type = None
         self._latest_hlc = None
         self._environment = environment
+        self._left_lane_change_valid = None 
+        self._right_lane_change_valid = None 
 
         self._weather_index = 0
 
@@ -1192,7 +1510,7 @@ class History:
         
         self._driving_log = pd.DataFrame(columns=[
             "ForwardCenter", "ForwardLeft", "ForwardRight", "LeftCenter",
-            "RightCenter", "Location", "Velocity", "Controls", "ClientAutopilotControls","ControlType","TrafficLight",
+            "RightCenter", "Location", "Velocity", "Controls", "ClientAutopilotControls","ControlType","LeftLaneChangeValid","RightLaneChangeValid","TrafficLight",
             "SpeedLimit", "HLC", "Environment", "WheaterId"
         ])
         self._timestamp = time.strftime("%Y-%m-%d_%H-%M-%S",
@@ -1213,6 +1531,12 @@ class History:
             img = np.reshape(np.array(image.raw_data), (160, 350, 4))[:, :, :3]
             self._latest_images[position + "_" + sensor_type] = img
 
+    def update_left_lane_change_valid(self, is_valid): 
+        self._left_lane_change_valid = is_valid
+
+    def update_right_lane_change_valid(self, is_valid): 
+        self._right_lane_change_valid = is_valid
+    
     def update_image_hq(self, image, position, sensor_type):
         if image.raw_data:
             img = np.reshape(np.array(image.raw_data), (1080, 1920, 4))[:, :, :3]
@@ -1274,6 +1598,8 @@ class History:
                 (c.throttle, c.steer, c.brake), 
                 (client_ap_c.throttle, client_ap_c.steer, client_ap_c.brake) if self.control_type==ControlType.CLIENT_AP else -1, 
                 self.control_type.value,
+                1 if self._left_lane_change_valid else 0,
+                1 if self._right_lane_change_valid else 0,
                 red_light,
                 player.get_speed_limit() / 3.6, 
                 hlc.value, 
@@ -1303,6 +1629,344 @@ class History:
         self._active = False
         self._initiate()
 
+class Evaluator():
+
+    def __init__(self, hud, world):
+        self.hud = hud
+        self.sensors = []
+        self.event_logs = []
+        self.model_summary = None
+        self.last_collision = 0
+        self.last_invasion = 0
+        self.world = world
+        self.last_wp = None
+        self.current_wp = None
+        self.last_dist = None
+        self.last_dist_at = None
+        self.total_dist_traveled = None
+        self.entered_oncoming_lane_at = None
+        self.cancel_reason = None
+        self.error_counter = None
+        self.current_episode_timestamp = None
+        self.current_episode_time = None
+        self.current_eval_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        self._last_col_loc = None
+        self._in_junction = False
+
+        self._exited_junction_at = None
+    
+        
+    def new_episode(self):
+        self.last_wp = None
+        self.current_wp = self.world._eval_routes[self.world._eval_routes_idx][0][0]
+        self._last_col_loc = None
+
+        self.last_dist = float('inf')
+        self.last_dist_at = None
+        self.last_collision = 0
+        self.last_invasion = 0
+        self.total_dist_traveled = 0
+        self.entered_oncoming_lane_at = None
+        self.cancel_reason = None
+        self.current_episode_time = time.time()
+        self.current_episode_timestamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        self.event_logs.append(pd.DataFrame(columns=[
+            "Timestamp", "EventType", "ObjectName", "Instensity",
+            "Location"
+        ]))
+
+        self.error_counter = {}
+        self._in_junction = False
+        self._exited_junction_at = None
+        for t in EventType:
+            self.error_counter[t.name] = 0
+
+    def initialize_model(self):
+        cols = [
+            "EvalNum", "Route", "RouteId", "WeatherId", "NumVehicles",
+            "LastWaypointReached", "DistanceCompleted", "TotalRouteDistance",
+            "CancelReason", "EventLogPath", "StartedAt", "EndedAt"
+        ]
+
+        for t in EventType:
+            cols.append(t.name)
+        self.model_summary = pd.DataFrame(columns=cols)
+
+    def tick(self):
+
+
+        closest_wp = self.world.map.get_waypoint(self.world.player.get_location())
+        lane_yaw = closest_wp.transform.rotation.yaw
+        if closest_wp.is_junction:
+            self._in_junction = True
+        else:
+            if self._in_junction:
+                self._exited_junction_at = time.time()
+            self._in_junction = False
+
+        wp = self.world._eval_routes[self.world._eval_routes_idx][self.world._eval_route_idx][0]
+        
+        if self.current_wp != wp:
+            if self.last_wp != None:
+                self.total_dist_traveled += get_distance(self.world.map.get_spawn_points()[self.current_wp].location,self.world.map.get_spawn_points()[self.last_wp].location)            
+            self.last_dist = float('inf')
+            self.last_wp = self.current_wp
+            self.current_wp = wp
+            
+        hero_transform = self.world.player.get_transform()
+        dist = get_distance(self.world.map.get_spawn_points()[wp].location, hero_transform.location)
+        hero_location = hero_transform.location
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        if self.last_dist > dist:
+            self.last_dist = dist
+            self.last_dist_at = time.time()
+        elif self.last_dist<dist-20:
+            event_type = EventType.HLC_IGNORE
+            self.error_counter[event_type.name] += 1
+            self.cancel_reason = event_type
+            self.world._eval_route_canceled = True
+            self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+            return
+        
+        if self.last_dist_at and self.last_dist_at + 120 < time.time():
+            # Model is stuck
+            event_type = EventType.STUCK
+            self.error_counter[event_type.name] += 1
+            self.cancel_reason = event_type
+            self.world._eval_route_canceled = True
+            self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+            return    
+
+        closest_wp = self.world.map.get_waypoint(self.world.player.get_location())
+        #print("Total distance traveled: ", self.total_dist_traveled, " Distance to next wp: ", dist)
+        lane_yaw = closest_wp.transform.rotation.yaw
+        hero_yaw = hero_transform.rotation.yaw
+        angle_diff = lane_yaw-hero_yaw
+        angle_diff = abs((angle_diff + 180) % 360 - 180)
+
+        if angle_diff > 45 and not closest_wp.is_junction:
+            if self.entered_oncoming_lane_at is None:
+                self.entered_oncoming_lane_at = time.time()
+            elif time.time() - self.entered_oncoming_lane_at > 5:
+                # Vehicle has entered oncoming lane without recovery, cancel route
+                event_type = EventType.ONCOMING_LANE_WITHOUT_RECOVERY
+                self.error_counter[event_type.name] += 1
+                self.cancel_reason = event_type
+                self.world._eval_route_canceled = True
+                self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+                return
+        else:
+            if self.entered_oncoming_lane_at and self.entered_oncoming_lane_at < time.time():
+                # Vehicle has entered oncoming lane, but recovered
+                print("Recovery")
+                event_type = EventType.ONCOMING_LANE_WITH_RECOVERY
+                self.error_counter[event_type.name] += 1
+                self.entered_oncoming_lane_at = None
+                self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        None,
+                        None,
+                        (hero_location.x, hero_location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+
+    def episode_complete(self, route_completed):
+        eval_num = self.world._eval_num_current
+        route = [x[0] for x in self.world._eval_routes[self.world._eval_routes_idx]]
+        routeId = self.world._eval_routes_idx
+        weatherId = self.world._eval_weathers[self.world._eval_weathers_idx]
+        numberOfVehicles = self.world._eval_cars[self.world._eval_cars_idx]
+        route_dist = get_route_distance(route, self.world.map)
+
+        data = [
+                eval_num,
+                '-'.join(str(x) for x in route), 
+                routeId,
+                weatherId, 
+                numberOfVehicles,
+                self.last_wp if not route_completed else route[-1],
+                "{:.1f}".format(self.total_dist_traveled if not route_completed else route_dist),
+                "{:.1f}".format(route_dist),
+                self.cancel_reason,
+                'EventLogs/'+self.current_episode_timestamp+'.csv',
+                self.current_episode_time,
+                time.time()
+            ]
+        for t in EventType:
+            data.append(self.error_counter[t.name])
+
+        self.model_summary = self.model_summary.append(pd.Series(data,
+            index=self.model_summary.columns),
+            ignore_index=True
+            )
+        # Write eventlog to csv
+        model_name = '_'.join(self.hud._drive_model_name.split('/'))
+        dir_path = Path("EvalResults") / self.current_eval_timestamp / model_name / "EventLogs"
+        csv_path = dir_path / (self.current_episode_timestamp + ".csv")
+        dir_path.mkdir(parents=True, exist_ok=True)
+        self.event_logs[-1].to_csv(csv_path)
+        
+        model_summary_path = Path("EvalResults") / self.current_eval_timestamp / model_name / "summary.csv"
+        self.model_summary.to_csv(str(model_summary_path))
+       
+    def initialize_sensors(self, parent_actor):
+        weak_self = weakref.ref(self)
+        world = parent_actor.get_world()
+
+        #Lane Invasion
+        bp = world.get_blueprint_library().find('sensor.other.lane_invasion')
+        sensor = world.spawn_actor(bp, carla.Transform(), attach_to=parent_actor)
+        sensor.listen(lambda event: Evaluator._on_lane_invasion(weak_self, event))        
+        self.sensors.append(sensor)
+        
+        #Collision
+        bp = world.get_blueprint_library().find('sensor.other.collision')
+        sensor = world.spawn_actor(bp, carla.Transform(), attach_to=parent_actor)
+        sensor.listen(lambda event: Evaluator._on_collision(weak_self, event))
+        self.sensors.append(sensor)
+
+    @staticmethod
+    def _on_lane_invasion(weak_self, event):
+
+        self = weak_self()
+        if not self:
+            return
+        if(time.time() - self.last_invasion < 2):
+            self.last_invasion = time.time()
+            return
+
+
+        if self._in_junction or (self._exited_junction_at and self._exited_junction_at + 2 > time.time()):
+            return
+
+        lane_type = (str(event.crossed_lane_markings[-1].type)).lower()
+        location = event.actor.get_transform().location
+        event_type = EventType.SIDEWALK_TOUCH if lane_type == 'none' else EventType.LANE_TOUCH 
+        self.error_counter[event_type.name] += 1
+
+        lane_types = set(x.type for x in event.crossed_lane_markings)
+        text = ['%r' % str(x).split()[-1] for x in lane_types]
+        self.hud.notification('Crossed line %s' % ' and '.join(text))
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+        self.event_logs[-1] = self.event_logs[-1].append(
+            pd.Series([
+                timestamp,
+                event_type, 
+                lane_type,
+                None,
+                (location.x, location.y)
+            ],
+            index=self.event_logs[-1].columns),
+            ignore_index=True)
+        self.last_invasion = time.time()
+
+    @staticmethod
+    def _on_collision(weak_self, event):
+        self = weak_self()
+        if not self:
+            return
+        
+        
+
+        if(time.time() - self.last_collision < 3):
+            self.last_collision = time.time()
+            return
+
+        actor_type = get_actor_display_name(event.other_actor)
+        event_type = None
+        location = event.actor.get_transform().location
+        impulse = event.normal_impulse
+        intensity = math.sqrt(impulse.x ** 2 + impulse.y ** 2 + impulse.z ** 2)
+        timestamp =  time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(time.time()))
+
+        if self._last_col_loc != None:
+            dist = get_distance(location, self._last_col_loc)
+            if dist < 5:
+                return
+            else:
+                self._last_col_loc = location
+        else:
+            self._last_col_loc = location
+
+
+        if 'vehicle' in event.other_actor.type_id:
+            other_actor_yaw = event.other_actor.get_transform().rotation.yaw
+            hero_yaw = event.actor.get_transform().rotation.yaw
+            angle_diff = other_actor_yaw-hero_yaw
+            
+            if abs((angle_diff + 180) % 360 - 180) <= 90:
+                event_type = EventType.REAR_END_VEHICLE_COLLISION
+            else:
+                # Front end collision - canceling route
+                event_type = EventType.FRONT_END_VEHICLE_COLLISION
+                self.cancel_reason = event_type
+                self.world._eval_route_canceled = True
+                self.event_logs[-1] = self.event_logs[-1].append(
+                    pd.Series([
+                        timestamp,
+                        event_type, 
+                        actor_type,
+                        intensity,
+                        (location.x, location.y)
+                    ],
+                    index=self.event_logs[-1].columns),
+                    ignore_index=True)
+                self.error_counter[event_type.name] += 1
+                return
+        else:
+            event_type = EventType.OBJECT_COLLISION
+
+        self.error_counter[event_type.name] += 1
+        self.hud.notification(event_type.name+' with %r, intensity %f' % (actor_type, intensity))
+        
+        self.event_logs[-1] = self.event_logs[-1].append(
+            pd.Series([
+                timestamp,
+                event_type, 
+                actor_type,
+                intensity,
+                (location.x, location.y)
+            ],
+            index=self.event_logs[-1].columns),
+            ignore_index=True)
+        self.last_collision = time.time()
+
+    def destroy_sensors(self):
+        for sensor in self.sensors:
+            sensor.destroy()
+        self.sensors = []
+
+
 # ==============================================================================
 # -- game_loop() ---------------------------------------------------------------
 # ==============================================================================
@@ -1314,71 +1978,50 @@ def game_loop(args, settings):
     world = None
 
     try:
+
         client = carla.Client(args.host, args.port)
         sim_world = client.get_world()
-        carla_map = sim_world.get_map()
-        environment = Environment.VOID
-        if carla_map.name == "Town01": 
-            environment = Environment.RURAL 
-        elif carla_map.name == "Town04": 
-            environment = Environment.HIGHWAY
-        #world_settings = sim_world.get_settings()
-        #world_settings.synchronous_mode = True
-        #sim_world.apply_settings(world_settings)
-
+        map_name = sim_world.get_map().name
         client.set_timeout(15.0)
 
+        # Get environment 
+        if map_name == "Town01" or map_name == "Town02":
+            environment = Environment.RURAL
+        elif map_name == "Town04":
+            environment = Environment.HIGHWAY
+
+        # Set display 
         display = pygame.display.set_mode((args.width, args.height),
                                           pygame.HWSURFACE | pygame.DOUBLEBUF)
 
         hud = HUD(args.width, args.height)
         history = History(args.output, environment)
-
         world = World(
             client,
             sim_world, 
-            hud, 
+            hud,
+            environment, 
             history, 
-            args.filter, 
-            settings,
-            args.hq_recording
-            )
+            args.filter,
+            settings)
         
-        print("game loop")
-        # Program can either be called with a folder of models to try, or one specific model file to test 
+
+        models = None 
+        
+        # Program can be called with a folder of models to test 
         if args.models is not None:
-            print("Model")
-            model_paths, parameter_paths, config_paths = get_best_models(Path(args.models)) 
-            model_path = model_paths.pop(0)
-            parameter_path = parameter_paths.pop(0)
-            config_path = config_paths.pop(0)
-
-            steer_scale, seq_length, sampling_interval, model_type = get_lstm_config(config_path)
-
-            world.hud._drive_model_parameters = get_parameter_text(parameter_path)
-            world.hud._drive_model_name = str(model_path).split('/')[-1]
-            if model_type == "lstm":
-                model = LSTMKeras() 
-                model.load_model(model_path, steer_scale, seq_length, sampling_interval)
-            elif model_type == "cnn": 
-                model = CNNKeras() 
-                model.load_model(model_path, steer_scale)
-            else: 
-                print("ERROR: do not recognize the model type")
-
-            controller = KeyboardControl(world, settings, environment, use_steering_wheel=args.joystick, drive_model=model, model_paths=model_paths, parameter_paths=parameter_paths, config_paths=config_paths)        
-
+            models = get_models(Path(args.models)) 
+            if models == False:
+                return  
             
-        else:
-            controller = KeyboardControl(world, settings, environment, use_steering_wheel=args.joystick, drive_model=None)
+        controller = KeyboardControl(world, settings, use_steering_wheel=args.joystick, models=models)       
  
-
 
         clock = pygame.time.Clock()
 
         while True:
             #sim_world.tick()
-            clock.tick(hud.server_fps_realtime)
+            clock.tick(int(hud.server_fps_realtime))
             if controller.parse_events(client, world, clock):
                 return
             world.tick(clock)
@@ -1388,7 +2031,9 @@ def game_loop(args, settings):
     finally:
 
         if world is not None:
-            world.reset_weahter()
+
+            # Reset weather so program always starts in CLEAR NOON 
+            world.reset_weather()
             print("Destroying world")
             world.destroy()
 
@@ -1445,7 +2090,7 @@ def main():
         '--models',
         dest='models',
         default=None,
-        help='folders with model tests')        
+        help='folders with models to test, models must be in separate folders with its own config-file')        
     argparser.add_argument(
         '-j',
         '--joystick',

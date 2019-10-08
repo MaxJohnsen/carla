@@ -2,21 +2,12 @@ from glob import glob
 from pathlib import Path
 import re 
 import carla
-import configparser
+import numpy as np
+import math
+from configparser import ConfigParser
 
 from agents.tools.enums import RoadOption
-from agents.tools.misc import distance_vehicle
-
-
-def get_lstm_config(path): 
-    config = configparser.ConfigParser()
-    config.read(path)
-    steer_scale = float(config.get("ModelConfig", "scale", fallback=1.0))
-    seq_length = int(config.get("ModelConfig","sequence_length",fallback=None))
-    sampling_interval = int(config.get("ModelConfig","sampling_interval", fallback=None))
-    model_type = config.get("ModelConfig","model", fallback=None)
-
-    return steer_scale, seq_length, sampling_interval, model_type
+from agents.tools.misc import distance_vehicle, get_distance
 
 
 def set_green_traffic_light(player):
@@ -27,52 +18,54 @@ def set_green_traffic_light(player):
         traffic_light.set_state(carla.TrafficLightState.Green)
 
 
-def get_best_models(models_path): 
+def get_models(models_folder): 
     """
     input: path to folder where different models has been tested 
     return: 
-        best_model_paths: a list of paths for each model - where it had the best val loss 
-        model_parameter_paths: a list of paths to each model's parameter text 
+        models: a list of (model_path, seq_length, sampling_interval)
     """
 
-    best_model_paths = []
-    model_parameter_paths = []
-    config_paths = []
+    models = []
 
     # For each model 
-    for model_path in sorted(glob(str(models_path / "*"))):
-        min_val_loss = float('inf')
-        min_val_loss_model_path = ""
-        # For each file in model folder 
-        for model_file_path in glob(str(Path(model_path) / "*.h5")):
-            # Get val loss of model
-            match = re.search("val(\d+\.*\d*)", model_file_path)
-            if match: 
-                val_loss = float(match.group(1))
-            else:
-                print("ERROR: in ", model_path)
-                print("Validation loss was not found in the model's file name")
-                return None 
+    for model_folder in sorted(glob(str(models_folder / "*"))):
 
-            # check if this is min val loss 
-            if val_loss <= min_val_loss: 
-                min_val_loss = val_loss
-                min_val_loss_model_path = Path(model_file_path)
+        # Get model path
+        model_path = glob(str(Path(model_folder) / "*.h5"))
+        if len(model_path)==0: 
+            print("ERROR: No .h5 file found in folder: " + model_folder)
+            return False 
+        if len(model_path)>1: 
+            print("ERROR: More than one .h5 file found in folder: " + model_folder)
+            return False 
+        model_path = model_path[0]
 
-        # Add best model to list 
-        best_model_paths.append(min_val_loss_model_path)
-        config_paths.append(model_path+"/config.ini")
+        # Get config settings
+        config_path = glob(str(Path(model_folder) / "*.ini"))
+        if len(config_path)==0: 
+            print("ERROR: No .ini file found in folder: " + model_folder)
+            return False 
+        if len(config_path)>1: 
+            print("ERROR: More than one .ini file found in folder: " + model_folder)
+            return False 
+        config_path = config_path[0]
 
-        # Get txt-file of model 
-        txt_paths = glob(str(Path(model_path) / "*parameters.txt"))
-        if len(txt_paths) != 1: 
-            print("ERROR in ", model_path)
-            print("model folder should have exactly one parameters.txt file")
-            return None 
-        else: 
-            model_parameter_paths.append(Path(txt_paths[0]))
+        # Read config file 
+        config = ConfigParser()
+        config.read(config_path)
+        seq_length = int(config.get("ModelConfig", "sequence_length", fallback=None))
+        sampling_interval = int(config.get("ModelConfig", "sampling_interval", fallback=None))
 
-    return best_model_paths, model_parameter_paths, config_paths
+        if seq_length is None: 
+            print("ERROR: No sequence length found in model config in folder: " + model_folder)
+            return False
+        if sampling_interval is None: 
+            print("ERROR: No sampling interval found in model config in folder: " + model_folder)
+            return False
+
+        models.append((model_path, seq_length, sampling_interval))
+
+    return models 
         
 
 def get_parameter_text(path):
@@ -83,11 +76,10 @@ def get_parameter_text(path):
             break
         if 'dataset' not in line and 'epochs' not in line and "batch" not in line:  
             params.append(line.replace("\n", ""))
-        
     return params
     
 
-def is_valid_lane_change(road_option, world, proximity_threshold=8): 
+def is_valid_lane_change(road_option, world, proximity_threshold=5.9): 
 
         if road_option != RoadOption.CHANGELANELEFT and road_option != RoadOption.CHANGELANERIGHT: 
             print("ERROR: road option is not a lane change")
@@ -137,3 +129,21 @@ def is_valid_lane_change(road_option, world, proximity_threshold=8):
                         if distance_vehicle(vehicle_waypoint, player_transform) < proximity_threshold:   
                             return False           
         return True            
+
+def get_route_distance(waypoint_index_list, current_map):
+    """
+    Calculates the total distance of a given route.
+    Input: 
+        waypoint_index_list: A list of waypoint indexes
+        map: Current map
+    Output: Total distance
+    """
+
+    total_distance = 0
+
+    for i in range(len(waypoint_index_list)-1):
+        wp1 = waypoint_index_list[i]
+        wp2 = waypoint_index_list[i+1]
+        total_distance += get_distance(current_map.get_spawn_points()[wp1].location, current_map.get_spawn_points()[wp2].location)
+
+    return total_distance
